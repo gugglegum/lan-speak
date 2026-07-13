@@ -1,0 +1,7 @@
+#include "resource.h"
+
+// GUI application, window, and tray icon. Transparent tray-friendly variant.
+IDI_LANSPEAK ICON "assets\\LanSpeak.ico"
+
+// Large OSD speaking indicator.
+IDI_LANSPEAK_FULL ICON "assets\\LanSpeakFull.ico"

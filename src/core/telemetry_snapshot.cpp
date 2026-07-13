@@ -1,0 +1,70 @@
+#include "core/telemetry_snapshot.h"
+
+#include "core/audio_math.h"
+
+#include <cmath>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+
+namespace lanspeak::core {
+
+TelemetrySnapshot::TelemetrySnapshot(std::size_t peer_count)
+    : peers_(peer_count == 0 ? nullptr : std::make_unique<PeerMeter[]>(peer_count)),
+      peer_count_(peer_count) {}
+
+void TelemetrySnapshot::accumulate_local_peak(double peak) {
+    if (!std::isfinite(peak) || peak <= 0.0) {
+        return;
+    }
+    double current = local_pending_peak_.load(std::memory_order_relaxed);
+    while (current < peak &&
+           !local_pending_peak_.compare_exchange_weak(
+               current,
+               peak,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+
+void TelemetrySnapshot::update_peer_meter(
+    std::size_t peer_index,
+    double level_db,
+    bool voice_active) {
+    if (peer_index >= peer_count_) {
+        return;
+    }
+    peers_[peer_index].level_db.store(level_db, std::memory_order_relaxed);
+    peers_[peer_index].voice_active.store(voice_active, std::memory_order_relaxed);
+}
+
+void TelemetrySnapshot::mark_peer_stream(std::size_t peer_index, std::uint64_t now_ms) {
+    if (peer_index < peer_count_) {
+        peers_[peer_index].last_stream_packet_ms.store(now_ms, std::memory_order_relaxed);
+    }
+}
+
+std::string TelemetrySnapshot::serialize(
+    std::uint64_t now_ms,
+    std::uint64_t stream_hold_ms) {
+    std::ostringstream stream;
+    stream.imbue(std::locale::classic());
+    stream << std::fixed << std::setprecision(1);
+
+    const double local_peak = local_pending_peak_.exchange(0.0, std::memory_order_relaxed);
+    stream << "local_level\t" << audio_level_dbfs(local_peak) << "\t"
+           << (local_peak >= 0.015 ? 1 : 0) << "\n";
+    for (std::size_t index = 0; index < peer_count_; ++index) {
+        const std::uint64_t last_packet =
+            peers_[index].last_stream_packet_ms.load(std::memory_order_relaxed);
+        const bool stream_active = last_packet != 0 && now_ms >= last_packet &&
+            now_ms - last_packet <= stream_hold_ms;
+        stream << "peer_level\t" << index << "\t"
+               << peers_[index].level_db.load(std::memory_order_relaxed) << "\t"
+               << (peers_[index].voice_active.load(std::memory_order_relaxed) ? 1 : 0) << "\t"
+               << (stream_active ? 1 : 0) << "\n";
+    }
+    return stream.str();
+}
+
+} // namespace lanspeak::core

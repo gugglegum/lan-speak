@@ -1,0 +1,75 @@
+# Local agent and IDE state
+/.agents/
+/.codex/
+/.idea/
+/.vscode/
+/.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake and build directories
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+CMakeUserPresets.json
+Testing/
+
+# MSVC and compiler artifacts
+*.obj
+*.o
+*.pch
+*.ipch
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.lib
+*.dll
+*.exe
+*.pdb
+*.res
+*.aps
+*.recipe
+*.VC.db
+*.VC.opendb
+*.tlog
+*.lastbuildstate
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+
+# Packaged binaries and local runtime state
+/dist/
+settings.txt
+LanSpeakGui.settings.txt
+
+# Logs, crash dumps, and temporary verification files
+*.log
+*.dmp
+*.tmp
+*.bak
+*.orig
+/_recovery/
+/_verification/
+
+# OS metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
