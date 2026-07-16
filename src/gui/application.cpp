@@ -79,6 +79,7 @@ constexpr int IDC_HOTKEY_CONTACT_RECORD_BASE = 11000;
 constexpr int IDC_HOTKEY_CONTACT_CLEAR_BASE = 12000;
 constexpr int IDC_CONTEXT_EDIT = 3001;
 constexpr int IDC_CONTEXT_DELETE = 3002;
+constexpr int IDC_CONTEXT_CONTINUOUS_TALK = 3003;
 constexpr int IDC_MENU_CAPTURE_BASE = 4000;
 constexpr int IDC_MENU_RENDER_BASE = 5000;
 constexpr int IDC_MENU_LANGUAGE_AUTO = 6001;
@@ -199,6 +200,7 @@ struct ApplicationState {
     std::vector<Contact> contacts;
     lanspeak::gui::ContactMeterBank contact_meters;
     std::vector<unsigned int> contact_ptt_refs;
+    std::vector<bool> contact_ptt_latched;
     double local_level_db = -90.0;
     bool local_voice_active = false;
     ULONGLONG local_level_update_ms = 0;
@@ -799,6 +801,7 @@ double contact_gain_slider_ratio(const Contact& contact) {
 void sync_contact_meter_state() {
     g_app.contact_meters.sync(g_app.contacts.size());
     g_app.contact_ptt_refs.resize(g_app.contacts.size(), 0);
+    g_app.contact_ptt_latched.resize(g_app.contacts.size(), false);
 }
 
 void reset_contact_meter_state() {
@@ -822,14 +825,22 @@ void repaint_contact_talk_state_now() {
 }
 
 bool contact_push_to_talk_active(size_t index) {
-    return index < g_app.contact_ptt_refs.size() && g_app.contact_ptt_refs[index] > 0;
+    return index < g_app.contact_ptt_refs.size() &&
+        index < g_app.contact_ptt_latched.size() &&
+        (g_app.contact_ptt_refs[index] > 0 || g_app.contact_ptt_latched[index]);
+}
+
+bool contact_push_to_talk_latched(size_t index) {
+    return index < g_app.contact_ptt_latched.size() && g_app.contact_ptt_latched[index];
 }
 
 bool any_contact_push_to_talk_active() {
-    return std::any_of(
-        g_app.contact_ptt_refs.begin(),
-        g_app.contact_ptt_refs.end(),
-        [](unsigned int refs) { return refs > 0; });
+    for (size_t index = 0; index < g_app.contacts.size(); ++index) {
+        if (contact_push_to_talk_active(index)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int contact_content_height() {
@@ -1335,7 +1346,8 @@ std::vector<OsdRow> active_osd_rows() {
     sync_contact_meter_state();
 
     const std::wstring outgoing_prefix = std::wstring(text(TextId::osd_me)) + L" \u2192";
-    if (g_app.push_to_talk_down && !g_app.input_muted) {
+    const bool global_talk_active = g_app.push_to_talk_down && !g_app.input_muted;
+    if (global_talk_active) {
         rows.push_back(OsdRow{
             outgoing_prefix,
             true,
@@ -1344,7 +1356,8 @@ std::vector<OsdRow> active_osd_rows() {
             true});
     }
     for (size_t index = 0; index < g_app.contacts.size(); ++index) {
-        if (contact_push_to_talk_active(index)) {
+        if (contact_push_to_talk_active(index) &&
+            (!global_talk_active || !g_app.contacts[index].global_ptt_enabled)) {
             rows.push_back(OsdRow{
                 outgoing_prefix + L" " + osd_contact_name(index),
                 false,
@@ -1648,7 +1661,13 @@ void draw_contact_mute_button(HDC dc, const RECT& button_rect, bool muted, bool 
     SelectObject(dc, old_icon_pen);
 }
 
-void draw_contact_ptt_button(HDC dc, const RECT& button_rect, bool active, bool global_active, bool selected) {
+void draw_contact_ptt_button(
+    HDC dc,
+    const RECT& button_rect,
+    bool active,
+    bool global_active,
+    bool latched,
+    bool selected) {
     const COLORREF background = active
         ? (global_active ? RGB(93, 142, 204) : RGB(44, 121, 209))
         : (selected ? RGB(213, 229, 250) : RGB(238, 242, 247));
@@ -1668,7 +1687,27 @@ void draw_contact_ptt_button(HDC dc, const RECT& button_rect, bool active, bool 
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text_color);
     RECT text_rect = button_rect;
+    if (latched) {
+        text_rect.right -= 4;
+    }
     DrawTextW(dc, L"PTT", 3, &text_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+
+    if (latched) {
+        HPEN lock_pen = g_app.gdi_objects.pen(text_color, 1);
+        HGDIOBJ old_lock_pen = SelectObject(dc, lock_pen);
+        HGDIOBJ old_lock_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        const int left = button_rect.right - 9;
+        const int top = button_rect.top + 3;
+        MoveToEx(dc, left + 1, top + 5, nullptr);
+        LineTo(dc, left + 1, top + 3);
+        LineTo(dc, left + 2, top + 1);
+        LineTo(dc, left + 4, top + 1);
+        LineTo(dc, left + 5, top + 3);
+        LineTo(dc, left + 5, top + 5);
+        Rectangle(dc, left, top + 5, left + 7, top + 10);
+        SelectObject(dc, old_lock_brush);
+        SelectObject(dc, old_lock_pen);
+    }
 }
 
 void draw_contact_global_ptt_button(HDC dc, const RECT& button_rect, bool enabled, bool selected) {
@@ -2009,7 +2048,13 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
     const bool global_ptt_enabled = index < g_app.contacts.size() && g_app.contacts[index].global_ptt_enabled;
     const bool global_talk_active = g_app.push_to_talk_down && !g_app.input_muted && global_ptt_enabled;
     const bool personal_talk_active = contact_push_to_talk_active(index);
-    draw_contact_ptt_button(dc, ptt_button, global_talk_active || personal_talk_active, global_talk_active, selected);
+    draw_contact_ptt_button(
+        dc,
+        ptt_button,
+        global_talk_active || personal_talk_active,
+        global_talk_active,
+        contact_push_to_talk_latched(index),
+        selected);
     draw_contact_global_ptt_button(dc, global_ptt_button, global_ptt_enabled, selected);
     draw_contact_mute_button(dc, mute_button, muted, selected);
 
@@ -3378,8 +3423,7 @@ void update_button_state() {
         !g_app.stop_requested &&
         process_is_running() &&
         g_app.core_mode == CoreMode::duplex &&
-        !g_app.contacts.empty() &&
-        !any_contact_push_to_talk_active();
+        !g_app.contacts.empty();
     if (g_app.push_to_talk_button) {
         EnableWindow(g_app.push_to_talk_button, talk_enabled);
     }
@@ -3602,36 +3646,58 @@ bool set_contact_push_to_talk_active(size_t index, bool active) {
             (g_app.push_to_talk_down && !g_app.input_muted)) {
             return false;
         }
-        if (contact_push_to_talk_active(index)) {
-            ++g_app.contact_ptt_refs[index];
-            repaint_contact_talk_state_now();
-            update_button_state();
-            update_osd_overlay();
-            return true;
-        }
-
-        g_app.contact_ptt_refs[index] = 1;
-        repaint_contact_talk_state_now();
-        update_button_state();
-        if (!send_contact_push_to_talk_state(index, true)) {
-            g_app.contact_ptt_refs[index] = 0;
+        const bool was_active = contact_push_to_talk_active(index);
+        ++g_app.contact_ptt_refs[index];
+        if (!was_active && !send_contact_push_to_talk_state(index, true)) {
+            --g_app.contact_ptt_refs[index];
             repaint_contact_talk_state_now();
             update_button_state();
             update_osd_overlay();
             return false;
         }
+        repaint_contact_talk_state_now();
+        update_button_state();
         update_osd_overlay();
         return true;
     }
 
-    if (!contact_push_to_talk_active(index)) {
+    if (g_app.contact_ptt_refs[index] == 0) {
         return false;
     }
 
+    const bool was_active = contact_push_to_talk_active(index);
     --g_app.contact_ptt_refs[index];
-    if (g_app.contact_ptt_refs[index] == 0) {
+    if (was_active && !contact_push_to_talk_active(index)) {
         send_contact_push_to_talk_state(index, false);
     }
+    repaint_contact_talk_state_now();
+    update_button_state();
+    update_osd_overlay();
+    return true;
+}
+
+bool set_contact_push_to_talk_latched(size_t index, bool active) {
+    sync_contact_meter_state();
+    if (index >= g_app.contacts.size() ||
+        index >= g_app.contact_ptt_latched.size() ||
+        g_app.contact_ptt_latched[index] == active) {
+        return false;
+    }
+    if (active && (!process_is_running() || g_app.core_mode != CoreMode::duplex)) {
+        return false;
+    }
+
+    const bool was_active = contact_push_to_talk_active(index);
+    g_app.contact_ptt_latched[index] = active;
+    const bool is_active = contact_push_to_talk_active(index);
+    if (was_active != is_active && !send_contact_push_to_talk_state(index, is_active)) {
+        g_app.contact_ptt_latched[index] = !active;
+        repaint_contact_talk_state_now();
+        update_button_state();
+        update_osd_overlay();
+        return false;
+    }
+
     repaint_contact_talk_state_now();
     update_button_state();
     update_osd_overlay();
@@ -3645,8 +3711,10 @@ void reset_contact_push_to_talk_state() {
     g_app.contact_hotkey_pressed = {};
     sync_contact_meter_state();
     for (size_t index = 0; index < g_app.contact_ptt_refs.size(); ++index) {
-        if (g_app.contact_ptt_refs[index] > 0) {
-            g_app.contact_ptt_refs[index] = 0;
+        const bool was_active = contact_push_to_talk_active(index);
+        g_app.contact_ptt_refs[index] = 0;
+        g_app.contact_ptt_latched[index] = false;
+        if (was_active) {
             send_contact_push_to_talk_state(index, false);
         }
     }
@@ -3702,8 +3770,7 @@ void reset_push_to_talk_state() {
 bool can_start_global_talk() {
     return process_is_running() &&
         g_app.core_mode == CoreMode::duplex &&
-        !g_app.contacts.empty() &&
-        !any_contact_push_to_talk_active();
+        !g_app.contacts.empty();
 }
 
 void apply_global_talk_sources() {
@@ -3900,6 +3967,7 @@ void add_contact_from_editor() {
         g_app.contacts.push_back(contact);
         g_app.contact_meters.append();
         g_app.contact_ptt_refs.push_back(0);
+        g_app.contact_ptt_latched.push_back(false);
         refresh_contact_list(static_cast<int>(g_app.contacts.size()) - 1);
         save_settings();
         restart_core_after_settings_change();
@@ -3945,6 +4013,9 @@ void remove_selected_contact() {
     g_app.contact_meters.erase(static_cast<size_t>(index));
     if (static_cast<size_t>(index) < g_app.contact_ptt_refs.size()) {
         g_app.contact_ptt_refs.erase(g_app.contact_ptt_refs.begin() + index);
+    }
+    if (static_cast<size_t>(index) < g_app.contact_ptt_latched.size()) {
+        g_app.contact_ptt_latched.erase(g_app.contact_ptt_latched.begin() + index);
     }
     update_global_hotkey_hook();
     refresh_contact_list(std::min(index, static_cast<int>(g_app.contacts.size()) - 1));
@@ -4226,8 +4297,18 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
 
             HMENU menu = CreatePopupMenu();
-            AppendMenuW(menu, MF_STRING, IDC_ADD_CONTACT, text(TextId::add));
+            const int context_contact_index = selected_contact_index();
+            const bool continuous_talk = clicked_contact && context_contact_index >= 0 &&
+                contact_push_to_talk_latched(static_cast<size_t>(context_contact_index));
+            AppendMenuW(
+                menu,
+                MF_STRING |
+                    (clicked_contact ? MF_ENABLED : MF_GRAYED) |
+                    (continuous_talk ? MF_CHECKED : MF_UNCHECKED),
+                IDC_CONTEXT_CONTINUOUS_TALK,
+                text(TextId::continuous_talk));
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, IDC_ADD_CONTACT, text(TextId::add));
             AppendMenuW(menu, MF_STRING | (clicked_contact ? MF_ENABLED : MF_GRAYED),
                         IDC_CONTEXT_EDIT, text(TextId::edit));
             AppendMenuW(menu, MF_STRING | (clicked_contact ? MF_ENABLED : MF_GRAYED),
@@ -4242,7 +4323,13 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 nullptr);
             DestroyMenu(menu);
 
-            if (command == IDC_ADD_CONTACT) {
+            if (command == IDC_CONTEXT_CONTINUOUS_TALK &&
+                clicked_contact &&
+                context_contact_index >= 0) {
+                set_contact_push_to_talk_latched(
+                    static_cast<size_t>(context_contact_index),
+                    !continuous_talk);
+            } else if (command == IDC_ADD_CONTACT) {
                 add_contact_from_editor();
             } else if (command == IDC_CONTEXT_EDIT && clicked_contact) {
                 update_selected_contact_from_editor();

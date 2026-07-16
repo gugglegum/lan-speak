@@ -11,6 +11,10 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Changes intended for version 1.1.0 will be recorded here as development progresses.
 
+### Added
+
+- Added a per-contact `Talk continuously` latch to the contact context menu. A latched contact remains active after the PTT button is released and is marked with a lock on the contact card.
+
 ### Changed
 
 - Replaced the group talk mode selector with a `Talk continuously` checkbox. The group talk button now always transmits only while held, while the checkbox latches and releases the same transmission state.
