@@ -28,14 +28,6 @@ LanguageSetting parse_language(std::wstring_view value) {
     return LanguageSetting::automatic;
 }
 
-std::wstring talk_mode_value(TalkMode mode) {
-    return mode == TalkMode::hold ? L"hold" : L"toggle";
-}
-
-TalkMode parse_talk_mode(std::wstring_view value) {
-    return value == L"hold" ? TalkMode::hold : TalkMode::toggle;
-}
-
 bool parse_bool(std::wstring_view value, bool fallback = false) {
     if (value == L"1" || value == L"true" || value == L"yes") return true;
     if (value == L"0" || value == L"false" || value == L"no") return false;
@@ -123,7 +115,6 @@ std::string serialize_settings(const AppSettings& settings) {
     output += encoded_line("window_width", std::to_wstring(settings.window_width));
     output += encoded_line("window_height", std::to_wstring(settings.window_height));
     output += encoded_line("language", language_value(settings.language));
-    output += encoded_line("talk_mode", talk_mode_value(settings.talk_mode));
     output += encoded_line("hotkey_ptt_all", encode_hotkey(settings.ptt_all_hotkey));
     output += encoded_line("debug_console", settings.debug_console_visible ? L"1" : L"0");
     output += encoded_line("local_port", std::to_wstring(settings.local_port));
@@ -166,7 +157,6 @@ AppSettings parse_settings(std::string_view serialized) {
         if (key == "window_width") settings.window_width = static_cast<int>(parse_long(value, 600, 1, 32767));
         else if (key == "window_height") settings.window_height = static_cast<int>(parse_long(value, 650, 1, 32767));
         else if (key == "language") settings.language = parse_language(value);
-        else if (key == "talk_mode") settings.talk_mode = parse_talk_mode(value);
         else if (key == "hotkey_ptt_all") settings.ptt_all_hotkey = decode_hotkey(value);
         else if (key == "debug_console") settings.debug_console_visible = parse_bool(value);
         else if (key == "local_port") settings.local_port = static_cast<std::uint16_t>(parse_long(value, 49740, 1, 65535));

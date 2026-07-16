@@ -490,7 +490,6 @@ void test_settings_round_trip_and_legacy_contact() {
     source.window_width = 777;
     source.window_height = 555;
     source.language = LanguageSetting::russian;
-    source.talk_mode = TalkMode::hold;
     source.ptt_all_hotkey = Hotkey{4, 'S'};
     source.debug_console_visible = true;
     source.capture_device_selector = L"{capture}\\device";
@@ -509,7 +508,7 @@ void test_settings_round_trip_and_legacy_contact() {
     CHECK(parsed.window_width == 777);
     CHECK(parsed.window_height == 555);
     CHECK(parsed.language == LanguageSetting::russian);
-    CHECK(parsed.talk_mode == TalkMode::hold);
+    CHECK(serialize_settings(source).find("talk_mode=") == std::string::npos);
     CHECK(parsed.contacts.size() == 1);
     CHECK(parsed.contacts[0].name == contact.name);
     CHECK(parsed.contacts[0].port == 50000);
@@ -520,6 +519,7 @@ void test_settings_round_trip_and_legacy_contact() {
 
     const std::string legacy =
         "version=1\n"
+        "talk_mode=toggle\n"
         "contact=10.0.0.2\t49740\t1.5\t1\t10\t0.03\t7\t90\t150\n";
     const AppSettings old = parse_settings(legacy);
     CHECK(old.contacts.size() == 1);

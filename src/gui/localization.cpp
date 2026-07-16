@@ -67,12 +67,8 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Говорить" : L"Talk";
     case TextId::talking:
         return ru ? L"Говорю..." : L"Talking...";
-    case TextId::talk_mode:
-        return ru ? L"Режим:" : L"Mode:";
-    case TextId::talk_mode_toggle:
-        return ru ? L"Переключение" : L"Toggle";
-    case TextId::talk_mode_hold:
-        return ru ? L"Пока нажимаю" : L"Hold to talk";
+    case TextId::continuous_talk:
+        return ru ? L"Говорить постоянно" : L"Talk continuously";
     case TextId::add_contact:
         return ru ? L"Добавить контакт" : L"Add contact";
     case TextId::edit:

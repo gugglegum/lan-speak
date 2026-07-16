@@ -42,7 +42,6 @@ using lanspeak::gui::Hotkey;
 using lanspeak::gui::LanguageSetting;
 using lanspeak::gui::OsdRow;
 using lanspeak::gui::TextId;
-using lanspeak::gui::TalkMode;
 using lanspeak::gui::draw_group_icon;
 using lanspeak::gui::current_hotkey_modifiers;
 using lanspeak::gui::is_modifier_key;
@@ -70,7 +69,7 @@ constexpr int IDC_ADD_CONTACT = 1022;
 constexpr int IDC_UPDATE_CONTACT = 1023;
 constexpr int IDC_TOGGLE_MUTE = 1027;
 constexpr int IDC_PUSH_TO_TALK = 1028;
-constexpr int IDC_TALK_MODE = 1029;
+constexpr int IDC_CONTINUOUS_TALK = 1029;
 constexpr int IDC_HOTKEY_DISPLAY = 1030;
 constexpr int IDC_HOTKEY_RECORD = 1031;
 constexpr int IDC_HOTKEY_CLEAR = 1032;
@@ -143,8 +142,7 @@ struct ApplicationState {
     HWND capture_device = nullptr;
     HWND render_device = nullptr;
     HWND push_to_talk_button = nullptr;
-    HWND talk_mode_label = nullptr;
-    HWND talk_mode_combo = nullptr;
+    HWND continuous_talk_checkbox = nullptr;
     HWND contact_list = nullptr;
     HWND contact_tooltip = nullptr;
     HWND local_meter = nullptr;
@@ -172,6 +170,9 @@ struct ApplicationState {
     bool restart_after_stop = false;
     bool input_muted = true;
     bool push_to_talk_down = false;
+    bool button_ptt_down = false;
+    bool hotkey_ptt_active = false;
+    bool continuous_talk = false;
     bool debug_console_visible = false;
     bool exit_requested = false;
     lanspeak::gui::TrayIcon tray_icon;
@@ -179,7 +180,6 @@ struct ApplicationState {
     HHOOK keyboard_hook = nullptr;
     Hotkey ptt_all_hotkey;
     bool global_hotkey_ptt_down = false;
-    bool global_hotkey_started_ptt = false;
     Hotkey contact_hotkey_pressed;
     bool contact_hotkey_down = false;
     std::vector<size_t> contact_hotkey_indices;
@@ -195,7 +195,6 @@ struct ApplicationState {
     int saved_window_width = kInitialWindowWidth;
     int saved_window_height = kInitialWindowHeight;
     LanguageSetting language_setting = LanguageSetting::automatic;
-    TalkMode talk_mode = TalkMode::toggle;
 
     std::vector<Contact> contacts;
     lanspeak::gui::ContactMeterBank contact_meters;
@@ -227,14 +226,6 @@ void fill_rect_color(HDC dc, const RECT& rect, COLORREF color);
 
 const wchar_t* text(TextId id) {
     return lanspeak::gui::localized_text(id, g_app.language_setting);
-}
-
-int talk_mode_combo_index(TalkMode mode) {
-    return mode == TalkMode::toggle ? 0 : 1;
-}
-
-TalkMode talk_mode_from_combo_index(int index) {
-    return index == 0 ? TalkMode::toggle : TalkMode::hold;
 }
 
 std::wstring format_hotkey(const Hotkey& hotkey) {
@@ -284,10 +275,7 @@ void deactivate_global_hotkey_ptt() {
         return;
     }
     g_app.global_hotkey_ptt_down = false;
-    if (g_app.global_hotkey_started_ptt) {
-        post_global_hotkey_ptt(false);
-    }
-    g_app.global_hotkey_started_ptt = false;
+    post_global_hotkey_ptt(false);
 }
 
 void deactivate_contact_hotkey_ptt() {
@@ -313,10 +301,7 @@ LRESULT CALLBACK low_level_keyboard_proc(int code, WPARAM wparam, LPARAM lparam)
             current_hotkey_modifiers() == g_app.ptt_all_hotkey.modifiers) {
             if (!g_app.global_hotkey_ptt_down) {
                 g_app.global_hotkey_ptt_down = true;
-                g_app.global_hotkey_started_ptt = g_app.push_to_talk_down == false || g_app.input_muted;
-                if (g_app.global_hotkey_started_ptt) {
-                    post_global_hotkey_ptt(true);
-                }
+                post_global_hotkey_ptt(true);
             }
             return 1;
         }
@@ -504,16 +489,6 @@ void trim_log_for_append(size_t incoming_chars) {
 HWND add_label(HWND parent, const wchar_t* text, int x, int y, int w, int h) {
     HWND control = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE,
                                   x, y, w, h, parent, nullptr, g_app.instance, nullptr);
-    set_font(control);
-    return control;
-}
-
-HWND add_combo(HWND parent, int id, int x, int y, int w, int h) {
-    HWND control = CreateWindowExW(WS_EX_CLIENTEDGE, L"COMBOBOX", L"",
-                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-                                      CBS_DROPDOWNLIST | CBS_HASSTRINGS,
-                                  x, y, w, h, parent,
-                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_app.instance, nullptr);
     set_font(control);
     return control;
 }
@@ -1298,17 +1273,6 @@ void update_default_device_labels() {
     }
 }
 
-void update_talk_mode_combo() {
-    if (!g_app.talk_mode_combo) {
-        return;
-    }
-
-    SendMessageW(g_app.talk_mode_combo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(g_app.talk_mode_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text(TextId::talk_mode_toggle)));
-    SendMessageW(g_app.talk_mode_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text(TextId::talk_mode_hold)));
-    SendMessageW(g_app.talk_mode_combo, CB_SETCURSEL, static_cast<WPARAM>(talk_mode_combo_index(g_app.talk_mode)), 0);
-}
-
 HICON load_app_icon(int width, int height) {
     HICON icon = static_cast<HICON>(LoadImageW(
         g_app.instance,
@@ -1630,10 +1594,9 @@ void apply_language_to_main_window(bool refresh_contacts = true) {
     if (g_app.push_to_talk_button) {
         SetWindowTextW(g_app.push_to_talk_button, text(g_app.push_to_talk_down ? TextId::talking : TextId::talk));
     }
-    if (g_app.talk_mode_label) {
-        SetWindowTextW(g_app.talk_mode_label, text(TextId::talk_mode));
+    if (g_app.continuous_talk_checkbox) {
+        SetWindowTextW(g_app.continuous_talk_checkbox, text(TextId::continuous_talk));
     }
-    update_talk_mode_combo();
     rebuild_menu_bar();
     if (refresh_contacts) {
         refresh_contact_list(selected_contact_index());
@@ -2116,7 +2079,9 @@ void set_contact_gain(size_t index, double value, bool persist);
 void adjust_selected_contact_gain(double delta);
 void toggle_selected_contact_global_ptt();
 void save_settings();
-void set_push_to_talk_active(bool active);
+void set_button_push_to_talk_active(bool active);
+void set_hotkey_push_to_talk_active(bool active);
+void set_continuous_talk_active(bool active);
 void reset_push_to_talk_state();
 void update_push_to_talk_button_text();
 bool set_contact_push_to_talk_active(size_t index, bool active);
@@ -3235,7 +3200,6 @@ void save_settings() {
     settings.window_width = window_size.cx;
     settings.window_height = window_size.cy;
     settings.language = g_app.language_setting;
-    settings.talk_mode = g_app.talk_mode;
     settings.ptt_all_hotkey = g_app.ptt_all_hotkey;
     settings.debug_console_visible = g_app.debug_console_visible;
     settings.local_port = g_app.local_port;
@@ -3265,7 +3229,6 @@ void load_settings() {
     g_app.saved_window_width = settings.window_width;
     g_app.saved_window_height = settings.window_height;
     g_app.language_setting = settings.language;
-    g_app.talk_mode = settings.talk_mode;
     g_app.ptt_all_hotkey = settings.ptt_all_hotkey;
     g_app.debug_console_visible = settings.debug_console_visible;
     g_app.saved_capture_device_selector = std::move(settings.capture_device_selector);
@@ -3420,8 +3383,11 @@ void update_button_state() {
     if (g_app.push_to_talk_button) {
         EnableWindow(g_app.push_to_talk_button, talk_enabled);
     }
+    if (g_app.continuous_talk_checkbox) {
+        EnableWindow(g_app.continuous_talk_checkbox, talk_enabled);
+    }
     if (!talk_enabled && g_app.push_to_talk_down) {
-        set_push_to_talk_active(false);
+        reset_push_to_talk_state();
     }
     update_push_to_talk_button_text();
 }
@@ -3433,6 +3399,9 @@ void set_running_state(bool) {
 void set_stopping_state() {
     if (g_app.push_to_talk_button) {
         EnableWindow(g_app.push_to_talk_button, FALSE);
+    }
+    if (g_app.continuous_talk_checkbox) {
+        EnableWindow(g_app.continuous_talk_checkbox, FALSE);
     }
     reset_contact_push_to_talk_state();
     reset_push_to_talk_state();
@@ -3588,23 +3557,6 @@ void select_menu_language(LanguageSetting setting) {
     save_settings();
 }
 
-void select_talk_mode(TalkMode mode) {
-    if (g_app.talk_mode == mode) {
-        update_talk_mode_combo();
-        return;
-    }
-
-    if (g_app.push_to_talk_down || !g_app.input_muted) {
-        set_push_to_talk_active(false);
-    } else {
-        reset_push_to_talk_state();
-    }
-    reset_contact_push_to_talk_state();
-    g_app.talk_mode = mode;
-    update_talk_mode_combo();
-    save_settings();
-}
-
 void ensure_core_running() {
     if (!process_is_running() && !g_app.contacts.empty()) {
         start_core(CoreMode::duplex);
@@ -3709,9 +3661,16 @@ void update_push_to_talk_button_text() {
         SendMessageW(
             g_app.push_to_talk_button,
             BM_SETSTATE,
-            g_app.talk_mode == TalkMode::toggle && g_app.push_to_talk_down ? TRUE : FALSE,
+            g_app.continuous_talk ? TRUE : FALSE,
             0);
         InvalidateRect(g_app.push_to_talk_button, nullptr, FALSE);
+    }
+    if (g_app.continuous_talk_checkbox) {
+        SendMessageW(
+            g_app.continuous_talk_checkbox,
+            BM_SETCHECK,
+            g_app.continuous_talk ? BST_CHECKED : BST_UNCHECKED,
+            0);
     }
 }
 
@@ -3721,6 +3680,9 @@ bool send_input_muted_state(bool muted) {
     if (!sent && !muted) {
         g_app.input_muted = true;
         g_app.push_to_talk_down = false;
+        g_app.button_ptt_down = false;
+        g_app.hotkey_ptt_active = false;
+        g_app.continuous_talk = false;
         update_push_to_talk_button_text();
     }
     return sent;
@@ -3728,20 +3690,34 @@ bool send_input_muted_state(bool muted) {
 
 void reset_push_to_talk_state() {
     g_app.push_to_talk_down = false;
+    g_app.button_ptt_down = false;
+    g_app.hotkey_ptt_active = false;
+    g_app.continuous_talk = false;
     g_app.input_muted = true;
     update_push_to_talk_button_text();
     repaint_contact_talk_state_now();
     update_osd_overlay();
 }
 
-void set_push_to_talk_active(bool active) {
-    if (active && (!process_is_running() || g_app.core_mode != CoreMode::duplex ||
-                   g_app.contacts.empty() || any_contact_push_to_talk_active())) {
+bool can_start_global_talk() {
+    return process_is_running() &&
+        g_app.core_mode == CoreMode::duplex &&
+        !g_app.contacts.empty() &&
+        !any_contact_push_to_talk_active();
+}
+
+void apply_global_talk_sources() {
+    const bool active =
+        g_app.button_ptt_down ||
+        g_app.hotkey_ptt_active ||
+        g_app.continuous_talk;
+    if (active && !can_start_global_talk()) {
         return;
     }
 
     const bool target_muted = !active;
     if (g_app.push_to_talk_down == active && g_app.input_muted == target_muted) {
+        update_push_to_talk_button_text();
         return;
     }
 
@@ -3752,45 +3728,59 @@ void set_push_to_talk_active(bool active) {
     update_osd_overlay();
 }
 
+void set_button_push_to_talk_active(bool active) {
+    if (active && !can_start_global_talk()) {
+        return;
+    }
+    g_app.button_ptt_down = active;
+    apply_global_talk_sources();
+}
+
+void set_hotkey_push_to_talk_active(bool active) {
+    if (active && !can_start_global_talk()) {
+        return;
+    }
+    g_app.hotkey_ptt_active = active;
+    apply_global_talk_sources();
+}
+
+void set_continuous_talk_active(bool active) {
+    if (active && !can_start_global_talk()) {
+        update_push_to_talk_button_text();
+        return;
+    }
+    g_app.continuous_talk = active;
+    apply_global_talk_sources();
+}
+
 LRESULT CALLBACK push_to_talk_button_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
-        if (IsWindowEnabled(window) && g_app.talk_mode == TalkMode::hold) {
-            set_push_to_talk_active(true);
+        if (IsWindowEnabled(window)) {
+            set_button_push_to_talk_active(true);
             SetCapture(window);
         }
         break;
     case WM_LBUTTONUP:
-        if (g_app.talk_mode == TalkMode::toggle && IsWindowEnabled(window)) {
-            set_push_to_talk_active(!g_app.push_to_talk_down);
-        } else if (g_app.push_to_talk_down) {
-            set_push_to_talk_active(false);
-            if (GetCapture() == window) {
-                ReleaseCapture();
-            }
+        set_button_push_to_talk_active(false);
+        if (GetCapture() == window) {
+            ReleaseCapture();
         }
         break;
     case WM_CAPTURECHANGED:
-        if (g_app.talk_mode == TalkMode::hold && g_app.push_to_talk_down && reinterpret_cast<HWND>(lparam) != window) {
-            set_push_to_talk_active(false);
+        if (g_app.button_ptt_down && reinterpret_cast<HWND>(lparam) != window) {
+            set_button_push_to_talk_active(false);
         }
         break;
     case WM_KEYDOWN:
         if (wparam == VK_SPACE || wparam == VK_RETURN) {
-            if (g_app.talk_mode == TalkMode::toggle) {
-                const bool repeated = (lparam & (1LL << 30)) != 0;
-                if (!repeated) {
-                    set_push_to_talk_active(!g_app.push_to_talk_down);
-                }
-            } else {
-                set_push_to_talk_active(true);
-            }
+            set_button_push_to_talk_active(true);
         }
         break;
     case WM_KEYUP:
-        if (g_app.talk_mode == TalkMode::hold && (wparam == VK_SPACE || wparam == VK_RETURN)) {
-            set_push_to_talk_active(false);
+        if (wparam == VK_SPACE || wparam == VK_RETURN) {
+            set_button_push_to_talk_active(false);
         }
         break;
     default:
@@ -3800,8 +3790,8 @@ LRESULT CALLBACK push_to_talk_button_proc(HWND window, UINT message, WPARAM wpar
     const LRESULT result = g_app.push_to_talk_old_proc
         ? CallWindowProcW(g_app.push_to_talk_old_proc, window, message, wparam, lparam)
         : DefWindowProcW(window, message, wparam, lparam);
-    if (g_app.talk_mode == TalkMode::toggle &&
-        (message == WM_LBUTTONUP || message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CAPTURECHANGED)) {
+    if (message == WM_LBUTTONUP || message == WM_KEYDOWN ||
+        message == WM_KEYUP || message == WM_CAPTURECHANGED) {
         update_push_to_talk_button_text();
     }
     return result;
@@ -3971,9 +3961,16 @@ void create_controls(HWND window) {
     g_app.push_to_talk_old_proc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(g_app.push_to_talk_button, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(push_to_talk_button_proc)));
     EnableWindow(g_app.push_to_talk_button, FALSE);
-    g_app.talk_mode_label = add_label(window, text(TextId::talk_mode), 148, 17, 58, 20);
-    g_app.talk_mode_combo = add_combo(window, IDC_TALK_MODE, 208, 12, 170, 200);
-    update_talk_mode_combo();
+    g_app.continuous_talk_checkbox = add_button(
+        window,
+        IDC_CONTINUOUS_TALK,
+        text(TextId::continuous_talk),
+        148,
+        12,
+        190,
+        28,
+        BS_AUTOCHECKBOX);
+    EnableWindow(g_app.continuous_talk_checkbox, FALSE);
 
     if (register_contact_panel_class()) {
         g_app.contact_list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LanSpeakContactPanel", L"",
@@ -4176,10 +4173,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 return 0;
             }
             break;
-        case IDC_TALK_MODE:
-            if (HIWORD(wparam) == CBN_SELCHANGE) {
-                const int selected = selected_combo_index(g_app.talk_mode_combo);
-                select_talk_mode(talk_mode_from_combo_index(selected));
+        case IDC_CONTINUOUS_TALK:
+            if (HIWORD(wparam) == BN_CLICKED) {
+                const bool checked =
+                    SendMessageW(g_app.continuous_talk_checkbox, BM_GETCHECK, 0, 0) ==
+                    BST_CHECKED;
+                set_continuous_talk_active(checked);
                 return 0;
             }
             break;
@@ -4298,7 +4297,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         update_osd_overlay();
         return 0;
     case WM_APP_GLOBAL_PTT:
-        set_push_to_talk_active(wparam != FALSE);
+        set_hotkey_push_to_talk_active(wparam != FALSE);
         return 0;
     case WM_APP_CONTACT_PTT:
         set_contact_push_to_talk_active(static_cast<size_t>(wparam), lparam != FALSE);

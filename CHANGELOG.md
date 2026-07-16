@@ -11,6 +11,10 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Changes intended for version 1.1.0 will be recorded here as development progresses.
 
+### Changed
+
+- Replaced the group talk mode selector with a `Talk continuously` checkbox. The group talk button now always transmits only while held, while the checkbox latches and releases the same transmission state.
+
 ## [1.0.0] - 2026-07-13
 
 ### Added

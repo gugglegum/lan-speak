@@ -29,11 +29,6 @@ enum class LanguageSetting {
     english
 };
 
-enum class TalkMode {
-    toggle,
-    hold
-};
-
 struct Contact {
     std::wstring name;
     std::wstring host = L"127.0.0.1";
@@ -54,7 +49,6 @@ struct AppSettings {
     int window_width = 600;
     int window_height = 650;
     LanguageSetting language = LanguageSetting::automatic;
-    TalkMode talk_mode = TalkMode::toggle;
     Hotkey ptt_all_hotkey;
     bool debug_console_visible = false;
     std::uint16_t local_port = 49740;
