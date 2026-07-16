@@ -1,4 +1,4 @@
-[English](README.md) | **Русский**
+[English](README.md) | **Русский** | [История изменений](CHANGELOG_RU.md)
 
 # LanSpeak
 
