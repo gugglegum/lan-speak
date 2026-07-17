@@ -14,6 +14,7 @@
 #include "gui/gdi_object_cache.h"
 #include "gui/hotkey_utils.h"
 #include "gui/localization.h"
+#include "gui/network_adapters.h"
 #include "gui/settings_store.h"
 #include "gui/telemetry_protocol.h"
 
@@ -28,6 +29,7 @@
 #include <iostream>
 #include <malloc.h>
 #include <new>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -512,6 +514,8 @@ void test_settings_round_trip_and_legacy_contact() {
     source.language = LanguageSetting::russian;
     source.ptt_all_hotkey = Hotkey{4, 'S'};
     source.debug_console_visible = true;
+    source.local_port = 51234;
+    source.network_adapter_id = L"{stable-adapter-id}";
     source.capture_device_selector = L"{capture}\\device";
     source.render_device_selector = L"{render}";
     Contact contact;
@@ -529,6 +533,8 @@ void test_settings_round_trip_and_legacy_contact() {
     CHECK(parsed.window_width == 777);
     CHECK(parsed.window_height == 555);
     CHECK(parsed.language == LanguageSetting::russian);
+    CHECK(parsed.local_port == 51234);
+    CHECK(parsed.network_adapter_id == source.network_adapter_id);
     CHECK(serialize_settings(source).find("talk_mode=") == std::string::npos);
     CHECK(parsed.contacts.size() == 1);
     CHECK(parsed.contacts[0].name == contact.name);
@@ -557,6 +563,8 @@ void test_room_peer_receive_buffer_options() {
         L"LanSpeakCore.exe",
         L"--room",
         L"49740",
+        L"--bind-address",
+        L"192.168.0.10",
         L"--peer",
         L"192.168.0.2",
         L"49740",
@@ -587,10 +595,22 @@ void test_room_peer_receive_buffer_options() {
     CHECK(!options.show_help);
     CHECK(options.capture_role == eConsole);
     CHECK(options.render_role == eConsole);
+    CHECK(options.bind_address == L"192.168.0.10");
     CHECK(options.room_peers.size() == 2);
     CHECK(options.room_peers[0].receive_buffer_ms == 45);
     CHECK(!options.room_peers[0].global_ptt_enabled);
     CHECK(options.room_peers[1].receive_buffer_ms == kDefaultReceiveBufferMs);
+}
+
+void test_network_adapter_resolution() {
+    using namespace lanspeak::gui;
+    const std::vector<NetworkAdapterInfo> adapters{
+        {L"adapter-a", L"Ethernet", L"192.168.0.10"},
+        {L"adapter-b", L"Wi-Fi", L"192.168.1.20"}};
+    CHECK(resolve_network_bind_address(adapters, L"") == std::optional<std::wstring>(L"0.0.0.0"));
+    CHECK(resolve_network_bind_address(adapters, L"adapter-b") ==
+          std::optional<std::wstring>(L"192.168.1.20"));
+    CHECK(!resolve_network_bind_address(adapters, L"missing"));
 }
 
 void test_fragmented_telemetry_snapshot() {
@@ -695,6 +715,7 @@ int main() {
         test_contact_meter_bank();
         test_settings_round_trip_and_legacy_contact();
         test_room_peer_receive_buffer_options();
+        test_network_adapter_resolution();
         test_fragmented_telemetry_snapshot();
         test_gdi_cache_handle_count_is_stable();
         test_hotkey_formatting_and_identity();

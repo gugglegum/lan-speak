@@ -111,6 +111,8 @@ add_library(LanSpeakGuiSupport STATIC
     src/gui/gdi_surface.cpp
     src/gui/hotkey_utils.cpp
     src/gui/localization.cpp
+    src/gui/network_adapters.cpp
+    src/gui/network_settings_dialog.cpp
     src/gui/osd_overlay.cpp
     src/gui/settings_store.cpp
     src/gui/telemetry_protocol.cpp
@@ -118,6 +120,7 @@ add_library(LanSpeakGuiSupport STATIC
     src/gui/ui_icons.cpp
     src/gui/vu_math.cpp)
 target_include_directories(LanSpeakGuiSupport PUBLIC src "${LANSPEAK_GENERATED_DIR}")
+target_link_libraries(LanSpeakGuiSupport PUBLIC iphlpapi ws2_32)
 
 add_executable(LanSpeakCore
     main.cpp

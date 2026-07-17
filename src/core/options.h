@@ -59,6 +59,7 @@ struct ProbeOptions {
     std::wstring peer_host = L"127.0.0.1";
     std::uint16_t peer_port = kDefaultUdpPort;
     std::uint16_t local_port = kDefaultUdpPort;
+    std::wstring bind_address = L"0.0.0.0";
     double input_gain = 1.0;
     double output_gain = 1.0;
     double tone_frequency = 440.0;

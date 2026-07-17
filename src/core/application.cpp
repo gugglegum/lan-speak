@@ -502,14 +502,26 @@ SocketHandle create_udp_socket() {
     return SocketHandle(socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP));
 }
 
-bool bind_udp_socket(SocketHandle& socket_handle, std::uint16_t port, bool loopback_only) {
+bool bind_udp_socket(
+    SocketHandle& socket_handle,
+    std::uint16_t port,
+    bool loopback_only,
+    const std::wstring& bind_address = L"0.0.0.0") {
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(port);
-    address.sin_addr.s_addr = htonl(loopback_only ? INADDR_LOOPBACK : INADDR_ANY);
+    if (loopback_only) {
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    } else if (bind_address.empty() || bind_address == L"0.0.0.0") {
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
+    } else if (InetPtonW(AF_INET, bind_address.c_str(), &address.sin_addr) != 1) {
+        std::wcout << L"Invalid local IPv4 bind address: " << bind_address << L"\n";
+        return false;
+    }
 
     if (bind(socket_handle.value, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
-        std::wcout << L"bind UDP port " << port << L" failed: " << winsock_error_text() << L"\n";
+        std::wcout << L"bind UDP " << bind_address << L":" << port
+                   << L" failed: " << winsock_error_text() << L"\n";
         return false;
     }
 
@@ -2467,6 +2479,7 @@ bool queue_udp_audio_packet_for_peer(
 
 void receive_room_udp_audio(
     std::uint16_t port,
+    const std::wstring& bind_address,
     std::uint32_t expected_sample_rate,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
     TelemetrySnapshot& telemetry_snapshot,
@@ -2495,7 +2508,7 @@ void receive_room_udp_audio(
         return;
     }
 
-    if (!bind_udp_socket(socket_handle, port, false)) {
+    if (!bind_udp_socket(socket_handle, port, false, bind_address)) {
         failed = true;
         ready = true;
         return;
@@ -3018,6 +3031,7 @@ int run_udp_send_test_in_thread_context(
 int run_room_send_test(
     IMMDeviceEnumerator& enumerator,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
+    const std::wstring& bind_address,
     int seconds,
     double input_gain,
     ERole capture_role,
@@ -3034,6 +3048,9 @@ int run_room_send_test(
     SocketHandle socket_handle = create_udp_socket();
     if (socket_handle.value == INVALID_SOCKET) {
         std::wcout << L"socket(AF_INET, SOCK_DGRAM) failed: " << winsock_error_text() << L"\n";
+        return 1;
+    }
+    if (!bind_udp_socket(socket_handle, 0, false, bind_address)) {
         return 1;
     }
 
@@ -3406,6 +3423,7 @@ int run_room_send_test(
 
 int run_room_send_test_in_thread_context(
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
+    const std::wstring& bind_address,
     int seconds,
     double input_gain,
     ERole capture_role,
@@ -3433,6 +3451,7 @@ int run_room_send_test_in_thread_context(
     return run_room_send_test(
         *sender_enumerator.Get(),
         peers,
+        bind_address,
         seconds,
         input_gain,
         capture_role,
@@ -3583,6 +3602,7 @@ void print_room_progress(
 int run_room_test(
     IMMDeviceEnumerator& enumerator,
     std::uint16_t local_port,
+    const std::wstring& bind_address,
     const std::vector<RoomPeerOptions>& peer_options,
     int seconds,
     double input_gain,
@@ -3602,7 +3622,7 @@ int run_room_test(
 
     std::wcout << L"== UDP room voice prototype ==\n";
     std::wcout << L"Mode:         " << (listen_only ? L"listen-only" : L"duplex") << L"\n";
-    std::wcout << L"Local listen: 0.0.0.0:" << local_port << L"\n";
+    std::wcout << L"Local listen: " << bind_address << L":" << local_port << L"\n";
     std::wcout << L"Contacts:     " << peer_options.size() << L"\n";
     std::wcout << L"Duration:     " << duration_text(seconds) << L"\n\n";
     if (!listen_only) {
@@ -3736,6 +3756,7 @@ int run_room_test(
     std::thread receiver([&]() {
         receive_room_udp_audio(
             local_port,
+            bind_address,
             sample_rate,
             peers,
             telemetry_snapshot,
@@ -3789,6 +3810,7 @@ int run_room_test(
             Sleep(250);
             send_result = run_room_send_test_in_thread_context(
                 peers,
+                bind_address,
                 seconds,
                 input_gain,
                 capture_role,
@@ -4311,6 +4333,7 @@ int lanspeak::core::run_application(int argc, wchar_t* argv[]) {
         return run_room_test(
             *enumerator.Get(),
             options.local_port,
+            options.bind_address,
             options.room_peers,
             options.udp_seconds,
             options.input_gain,

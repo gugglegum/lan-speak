@@ -14,6 +14,8 @@
 #include "gui/hotkey_utils.h"
 #include "gui/localization.h"
 #include "gui/model.h"
+#include "gui/network_adapters.h"
+#include "gui/network_settings_dialog.h"
 #include "gui/osd_overlay.h"
 #include "gui/settings_store.h"
 #include "gui/tray_icon.h"
@@ -27,6 +29,7 @@
 #include <iomanip>
 #include <locale>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -41,6 +44,7 @@ using lanspeak::gui::AppSettings;
 using lanspeak::gui::Contact;
 using lanspeak::gui::Hotkey;
 using lanspeak::gui::LanguageSetting;
+using lanspeak::gui::NetworkSettingsValue;
 using lanspeak::gui::OsdRow;
 using lanspeak::gui::TextId;
 using lanspeak::gui::draw_group_icon;
@@ -60,6 +64,7 @@ constexpr UINT WM_APP_CONTACT_PTT = WM_APP + 4;
 constexpr UINT WM_APP_CORE_TELEMETRY = WM_APP + 5;
 constexpr UINT WM_APP_CORE_EXIT = WM_APP + 6;
 constexpr UINT WM_APP_SHOW_EXISTING = WM_APP + 7;
+constexpr UINT WM_APP_NETWORK_FALLBACK = WM_APP + 8;
 constexpr UINT_PTR IDT_OSD_HOLD = 4003;
 constexpr UINT_PTR ID_TRAY_ICON = 1;
 constexpr int IDC_CAPTURE_DEVICE = 1005;
@@ -90,6 +95,7 @@ constexpr int IDC_MENU_GLOBAL_HOTKEYS = 6004;
 constexpr int IDC_MENU_DEBUG_CONSOLE = 6005;
 constexpr int IDC_MENU_ABOUT = 6006;
 constexpr int IDC_MENU_AUDIO_LATENCY = 6007;
+constexpr int IDC_MENU_NETWORK_SETTINGS = 6008;
 constexpr int IDC_TRAY_SHOW = 7001;
 constexpr int IDC_TRAY_EXIT = 7002;
 constexpr int kMaxMenuDevices = 500;
@@ -142,6 +148,8 @@ struct ApplicationState {
     HINSTANCE instance = nullptr;
     HWND main_window = nullptr;
     std::uint16_t local_port = 49740;
+    std::wstring network_adapter_id;
+    std::wstring bind_address = L"0.0.0.0";
     HWND capture_device = nullptr;
     HWND render_device = nullptr;
     HWND push_to_talk_button = nullptr;
@@ -1579,6 +1587,7 @@ void rebuild_menu_bar() {
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(input_menu), text(TextId::capture_device));
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(output_menu), text(TextId::render_device));
     AppendMenuW(settings_menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(settings_menu, MF_STRING, IDC_MENU_NETWORK_SETTINGS, text(TextId::network_settings));
     AppendMenuW(
         settings_menu,
         MF_STRING,
@@ -3016,6 +3025,9 @@ std::wstring build_command_line(
     args.push_back(L"--output-gain");
     args.push_back(L"1.0");
 
+    args.push_back(L"--bind-address");
+    args.push_back(g_app.bind_address);
+
     if (telemetry_write && telemetry_write != INVALID_HANDLE_VALUE) {
         args.push_back(L"--telemetry-handle");
         args.push_back(std::to_wstring(reinterpret_cast<std::uintptr_t>(telemetry_write)));
@@ -3262,6 +3274,7 @@ void save_settings() {
     settings.ptt_all_hotkey = g_app.ptt_all_hotkey;
     settings.debug_console_visible = g_app.debug_console_visible;
     settings.local_port = g_app.local_port;
+    settings.network_adapter_id = g_app.network_adapter_id;
     settings.capture_device_selector = selected_device_selector(g_app.capture_device, g_app.capture_device_selectors);
     settings.render_device_selector = selected_device_selector(g_app.render_device, g_app.render_device_selectors);
     settings.contacts = g_app.contacts;
@@ -3293,6 +3306,7 @@ void load_settings() {
     g_app.saved_capture_device_selector = std::move(settings.capture_device_selector);
     g_app.saved_render_device_selector = std::move(settings.render_device_selector);
     g_app.local_port = settings.local_port;
+    g_app.network_adapter_id = std::move(settings.network_adapter_id);
 
     update_global_hotkey_hook();
     if (g_app.log) {
@@ -3301,6 +3315,22 @@ void load_settings() {
     apply_language_to_main_window(false);
     refresh_contact_list(0);
     restore_saved_window_size();
+}
+
+bool resolve_saved_network_binding() {
+    const std::vector<lanspeak::gui::NetworkAdapterInfo> adapters =
+        lanspeak::gui::enumerate_active_ipv4_adapters();
+    const std::optional<std::wstring> address =
+        lanspeak::gui::resolve_network_bind_address(adapters, g_app.network_adapter_id);
+    if (address) {
+        g_app.bind_address = *address;
+        return false;
+    }
+
+    g_app.network_adapter_id.clear();
+    g_app.bind_address = L"0.0.0.0";
+    save_settings();
+    return true;
 }
 
 void add_device_combo_item(
@@ -3502,6 +3532,10 @@ void start_core(CoreMode mode) {
         append_log(text(TextId::add_contact_before_start));
         update_button_state();
         return;
+    }
+
+    if (resolve_saved_network_binding()) {
+        PostMessageW(g_app.main_window, WM_APP_NETWORK_FALLBACK, 0, 0);
     }
 
     const std::wstring exe_path = find_core_exe();
@@ -4174,6 +4208,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         create_controls(window);
         load_settings();
         refresh_device_lists();
+        if (resolve_saved_network_binding()) {
+            PostMessageW(window, WM_APP_NETWORK_FALLBACK, 0, 0);
+        }
         add_tray_icon(window);
         start_single_instance_waiter();
         ensure_core_running();
@@ -4248,6 +4285,30 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 g_app.language_setting,
                 g_app.capture_diagnostics,
                 g_app.render_diagnostics);
+            return 0;
+        }
+        if (command_id == IDC_MENU_NETWORK_SETTINGS) {
+            const std::vector<lanspeak::gui::NetworkAdapterInfo> adapters =
+                lanspeak::gui::enumerate_active_ipv4_adapters();
+            const NetworkSettingsValue current{g_app.local_port, g_app.network_adapter_id};
+            NetworkSettingsValue result;
+            if (lanspeak::gui::show_network_settings_dialog(
+                    g_app.instance,
+                    window,
+                    load_app_large_icon(),
+                    load_app_small_icon(),
+                    g_app.language_setting,
+                    adapters,
+                    current,
+                    result)) {
+                g_app.local_port = result.local_port;
+                g_app.network_adapter_id = std::move(result.adapter_id);
+                const std::optional<std::wstring> bind_address =
+                    lanspeak::gui::resolve_network_bind_address(adapters, g_app.network_adapter_id);
+                g_app.bind_address = bind_address.value_or(L"0.0.0.0");
+                save_settings();
+                restart_core_after_settings_change();
+            }
             return 0;
         }
         if (command_id == IDC_MENU_DEBUG_CONSOLE) {
@@ -4405,6 +4466,13 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_APP_SHOW_EXISTING:
         show_main_window_from_tray(window);
+        return 0;
+    case WM_APP_NETWORK_FALLBACK:
+        MessageBoxW(
+            window,
+            text(TextId::network_adapter_missing),
+            L"LAN Speak",
+            MB_OK | MB_ICONWARNING);
         return 0;
     case WM_APP_TRAY:
         if (wparam == ID_TRAY_ICON) {

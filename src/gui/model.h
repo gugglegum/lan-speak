@@ -53,6 +53,7 @@ struct AppSettings {
     Hotkey ptt_all_hotkey;
     bool debug_console_visible = false;
     std::uint16_t local_port = 49740;
+    std::wstring network_adapter_id;
     std::wstring capture_device_selector;
     std::wstring render_device_selector;
     std::vector<Contact> contacts;

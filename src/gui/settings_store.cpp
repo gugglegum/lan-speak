@@ -121,6 +121,7 @@ std::string serialize_settings(const AppSettings& settings) {
     output += encoded_line("hotkey_ptt_all", encode_hotkey(settings.ptt_all_hotkey));
     output += encoded_line("debug_console", settings.debug_console_visible ? L"1" : L"0");
     output += encoded_line("local_port", std::to_wstring(settings.local_port));
+    output += encoded_line("network_adapter", settings.network_adapter_id);
     output += encoded_line("mic_gain", L"1.0");
     output += encoded_line("capture_device", settings.capture_device_selector);
     output += encoded_line("render_device", settings.render_device_selector);
@@ -164,6 +165,7 @@ AppSettings parse_settings(std::string_view serialized) {
         else if (key == "hotkey_ptt_all") settings.ptt_all_hotkey = decode_hotkey(value);
         else if (key == "debug_console") settings.debug_console_visible = parse_bool(value);
         else if (key == "local_port") settings.local_port = static_cast<std::uint16_t>(parse_long(value, 49740, 1, 65535));
+        else if (key == "network_adapter") settings.network_adapter_id = value;
         else if (key == "capture_device") settings.capture_device_selector = value;
         else if (key == "render_device") settings.render_device_selector = value;
         else if (key == "contact") {

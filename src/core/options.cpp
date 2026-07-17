@@ -205,6 +205,23 @@ ProbeOptions parse_options(int argc, wchar_t* argv[]) {
             } else {
                 options.udp_seconds = *seconds;
             }
+        } else if (argument == L"--bind-address") {
+            if (index + 1 >= argc) {
+                std::wcout << L"--bind-address requires an IPv4 address\n";
+                options.show_help = true;
+                continue;
+            }
+            options.bind_address = argv[++index] != nullptr ? argv[index] : L"";
+            if (options.bind_address.empty()) {
+                std::wcout << L"--bind-address cannot be empty\n";
+                options.show_help = true;
+            }
+        } else if (argument.rfind(L"--bind-address=", 0) == 0) {
+            options.bind_address = argument.substr(std::wstring(L"--bind-address=").size());
+            if (options.bind_address.empty()) {
+                std::wcout << L"--bind-address cannot be empty\n";
+                options.show_help = true;
+            }
         } else if (argument == L"--input-gain") {
             if (index + 1 >= argc) {
                 std::wcout << L"--input-gain requires <0..8>\n";
@@ -790,6 +807,7 @@ void print_usage() {
     std::wcout << L"Usage: LanSpeakCore.exe [--exclusive] [--input-gain N] [--output-gain N]\n";
     std::wcout << L"                     [--capture-role ROLE] [--render-role ROLE]\n";
     std::wcout << L"                     [--capture-device SELECTOR] [--render-device SELECTOR]\n";
+    std::wcout << L"                     [--bind-address IPV4]\n";
     std::wcout << L"                     [--telemetry-handle HANDLE] [--control-handle HANDLE] [--input-muted]\n";
     std::wcout << L"                     [--self-duck-db DB] [--self-duck-hold-ms MS]\n";
     std::wcout << L"                     [--self-duck-attack-ms MS] [--self-duck-release-ms MS]\n";
@@ -814,6 +832,7 @@ void print_usage() {
     std::wcout << L"--duplex sends microphone audio to a peer and plays incoming peer audio until Ctrl+C.\n";
     std::wcout << L"  Add optional [seconds] to --duplex only for bounded tests.\n";
     std::wcout << L"--room is a multi-peer full-mesh voice mode. Repeat --peer for each contact.\n";
+    std::wcout << L"  --bind-address selects the local IPv4 address for room receive and send sockets.\n";
     std::wcout << L"  Add --listen-only to --room to receive and play contacts without sending microphone audio.\n";
     std::wcout << L"  Add --input-muted to start room sending with microphone audio muted until a control command opens it.\n";
     std::wcout << L"  Use --test-seconds N with --room only for bounded tests.\n";

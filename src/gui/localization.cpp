@@ -168,6 +168,21 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Отладочная консоль" : L"Debug console";
     case TextId::audio_latency_diagnostics:
         return ru ? L"Диагностика задержек звука" : L"Audio latency diagnostics";
+    case TextId::network_settings:
+        return ru ? L"Настройки сети" : L"Network settings";
+    case TextId::local_udp_port:
+        return ru ? L"Локальный UDP-порт" : L"Local UDP port";
+    case TextId::network_interface:
+        return ru ? L"Сетевой интерфейс" : L"Network interface";
+    case TextId::all_network_interfaces:
+        return ru ? L"Все интерфейсы (0.0.0.0)" : L"All interfaces (0.0.0.0)";
+    case TextId::network_port_invalid:
+        return ru ? L"Порт должен быть числом от 1 до 65535."
+                  : L"Port must be a number from 1 to 65535.";
+    case TextId::network_adapter_missing:
+        return ru
+            ? L"Сохранённый сетевой интерфейс недоступен. LAN Speak переключён на все интерфейсы (0.0.0.0)."
+            : L"The saved network interface is unavailable. LAN Speak switched to all interfaces (0.0.0.0).";
     case TextId::device_name:
         return ru ? L"Устройство" : L"Device";
     case TextId::audio_format:
