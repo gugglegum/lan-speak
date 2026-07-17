@@ -2347,7 +2347,7 @@ void read_room_control_commands(
 
 bool prepare_room_peers(
     const std::vector<RoomPeerOptions>& options,
-    size_t start_threshold_frames,
+    UINT32 sample_rate,
     size_t max_jitter_frames,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers) {
     peers.clear();
@@ -2361,6 +2361,9 @@ bool prepare_room_peers(
     for (const RoomPeerOptions& option : options) {
         auto peer = std::make_unique<RoomPeerRuntime>();
         peer->options = option;
+        const size_t start_threshold_frames = std::max<size_t>(
+            1,
+            static_cast<size_t>(sample_rate) * static_cast<size_t>(option.receive_buffer_ms) / 1000);
         peer->jitter = std::make_unique<JitterBuffer>(start_threshold_frames, max_jitter_frames);
         peer->ducking = *room_peer_ducking_settings(option);
         initialize_room_peer_control(peer->control, option);
@@ -3661,10 +3664,9 @@ int run_room_test(
     }
 
     const UINT32 sample_rate = mix_format->nSamplesPerSec;
-    const size_t start_threshold_frames = static_cast<size_t>(sample_rate / 50);
     const size_t max_jitter_frames = static_cast<size_t>(sample_rate / 2);
     std::vector<std::unique_ptr<RoomPeerRuntime>> peers;
-    if (!prepare_room_peers(peer_options, start_threshold_frames, max_jitter_frames, peers)) {
+    if (!prepare_room_peers(peer_options, sample_rate, max_jitter_frames, peers)) {
         return 1;
     }
 
@@ -3675,6 +3677,7 @@ int run_room_test(
                    << L", gain=" << peer.options.gain
                    << L", duck-db=" << peer.options.self_duck_db
                    << L", threshold=" << peer.options.self_duck_threshold
+                   << L", receive-buffer=" << peer.options.receive_buffer_ms << L" ms"
                    << L", global-ptt=" << (peer.options.global_ptt_enabled ? L"on" : L"off") << L"\n";
     }
 
@@ -3767,8 +3770,7 @@ int run_room_test(
     }
     std::wcout << L"Render buffer: " << buffer_frames << L" frames, "
                << frames_to_ms(buffer_frames, sample_rate) << L" ms\n";
-    std::wcout << L"Jitter start threshold: " << start_threshold_frames << L" frames, "
-               << frames_to_ms(static_cast<UINT32>(start_threshold_frames), sample_rate) << L" ms\n";
+    std::wcout << L"Receive buffers: per contact\n";
 
     const UINT32 prefill_frames = std::min(
         buffer_frames,

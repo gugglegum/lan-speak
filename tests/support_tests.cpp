@@ -1,6 +1,7 @@
 #include "common/line_buffer.h"
 #include "core/audio_math.h"
 #include "core/jitter_buffer.h"
+#include "core/options.h"
 #include "core/pcm_audio.h"
 #include "core/peer_router.h"
 #include "core/room_mixer.h"
@@ -501,6 +502,7 @@ void test_settings_round_trip_and_legacy_contact() {
     contact.gain = 1.4;
     contact.muted = true;
     contact.global_ptt_enabled = false;
+    contact.receive_buffer_ms = 45;
     contact.ptt_hotkey = Hotkey{2, '1'};
     source.contacts.push_back(contact);
 
@@ -515,6 +517,7 @@ void test_settings_round_trip_and_legacy_contact() {
     CHECK(close_to(parsed.contacts[0].gain, 1.4));
     CHECK(parsed.contacts[0].muted);
     CHECK(!parsed.contacts[0].global_ptt_enabled);
+    CHECK(parsed.contacts[0].receive_buffer_ms == 45);
     CHECK(parsed.contacts[0].ptt_hotkey == contact.ptt_hotkey);
 
     const std::string legacy =
@@ -526,6 +529,47 @@ void test_settings_round_trip_and_legacy_contact() {
     CHECK(old.contacts[0].name == L"10.0.0.2");
     CHECK(old.contacts[0].port == 49740);
     CHECK(close_to(old.contacts[0].gain, 1.5));
+    CHECK(old.contacts[0].receive_buffer_ms == 20);
+}
+
+void test_room_peer_receive_buffer_options() {
+    using namespace lanspeak::core;
+    std::vector<std::wstring> arguments{
+        L"LanSpeakCore.exe",
+        L"--room",
+        L"49740",
+        L"--peer",
+        L"192.168.0.2",
+        L"49740",
+        L"1.0",
+        L"12",
+        L"0.02",
+        L"8",
+        L"80",
+        L"120",
+        L"0",
+        L"45",
+        L"--peer",
+        L"192.168.0.3",
+        L"49740",
+        L"1.0",
+        L"0",
+        L"0.02",
+        L"8",
+        L"80",
+        L"120"};
+    std::vector<wchar_t*> argv;
+    argv.reserve(arguments.size());
+    for (std::wstring& argument : arguments) {
+        argv.push_back(argument.data());
+    }
+
+    const ProbeOptions options = parse_options(static_cast<int>(argv.size()), argv.data());
+    CHECK(!options.show_help);
+    CHECK(options.room_peers.size() == 2);
+    CHECK(options.room_peers[0].receive_buffer_ms == 45);
+    CHECK(!options.room_peers[0].global_ptt_enabled);
+    CHECK(options.room_peers[1].receive_buffer_ms == kDefaultReceiveBufferMs);
 }
 
 void test_fragmented_telemetry_snapshot() {
@@ -617,6 +661,7 @@ int main() {
         test_ducking_and_vu_math();
         test_contact_meter_bank();
         test_settings_round_trip_and_legacy_contact();
+        test_room_peer_receive_buffer_options();
         test_fragmented_telemetry_snapshot();
         test_gdi_cache_handle_count_is_stable();
         test_hotkey_formatting_and_identity();

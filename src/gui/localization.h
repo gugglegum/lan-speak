@@ -37,6 +37,8 @@ enum class TextId {
     attack_ms,
     hold_ms,
     release_ms,
+    receive_buffer_ms,
+    milliseconds_short,
     save,
     add,
     cancel,

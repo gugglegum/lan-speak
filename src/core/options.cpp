@@ -727,7 +727,7 @@ ProbeOptions parse_options(int argc, wchar_t* argv[]) {
             options.room_listen_only = true;
         } else if (argument == L"--peer") {
             if (index + 8 >= argc) {
-                std::wcout << L"--peer requires <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt]\n";
+                std::wcout << L"--peer requires <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt] [receive-buffer-ms]\n";
                 options.show_help = true;
                 continue;
             }
@@ -749,6 +749,14 @@ ProbeOptions parse_options(int argc, wchar_t* argv[]) {
                     ++index;
                 }
             }
+            int receive_buffer_ms = kDefaultReceiveBufferMs;
+            if (index + 1 < argc) {
+                const std::wstring next = argv[index + 1] != nullptr ? argv[index + 1] : L"";
+                if (const std::optional<int> parsed = parse_int_range(next, 1, 500)) {
+                    receive_buffer_ms = *parsed;
+                    ++index;
+                }
+            }
 
             if (peer.host.empty() || !port || !gain || !duck_db || !threshold ||
                 !attack_ms || !hold_ms || !release_ms) {
@@ -764,6 +772,7 @@ ProbeOptions parse_options(int argc, wchar_t* argv[]) {
             peer.self_duck_attack_ms = *attack_ms;
             peer.self_duck_hold_ms = *hold_ms;
             peer.self_duck_release_ms = *release_ms;
+            peer.receive_buffer_ms = receive_buffer_ms;
             peer.global_ptt_enabled = global_ptt_enabled;
             options.room_peers.push_back(peer);
         } else if (argument == L"--help" || argument == L"-h" || argument == L"/?") {
@@ -794,7 +803,7 @@ void print_usage() {
     std::wcout << L"       LanSpeakCore.exe [gain options] --udp-play <port> [seconds]\n";
     std::wcout << L"       LanSpeakCore.exe [gain options] --udp-audio-loopback [seconds] [port]\n";
     std::wcout << L"       LanSpeakCore.exe [gain options] --duplex <local-port> <peer-host> <peer-port> [seconds]\n\n";
-    std::wcout << L"       LanSpeakCore.exe --room <local-port> [--listen-only] --peer <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt]...\n\n";
+    std::wcout << L"       LanSpeakCore.exe --room <local-port> [--listen-only] --peer <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt] [receive-buffer-ms]...\n\n";
     std::wcout << L"Default mode checks shared WASAPI paths only, so it should coexist with CS2 voice.\n";
     std::wcout << L"--list-devices prints active WASAPI endpoints in a stable GUI-friendly format.\n";
     std::wcout << L"--capture-test opens the selected/default capture role in shared/event mode and measures callbacks.\n";

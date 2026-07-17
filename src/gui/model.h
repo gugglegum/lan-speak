@@ -42,6 +42,7 @@ struct Contact {
     int duck_attack_ms = 8;
     int duck_hold_ms = 80;
     int duck_release_ms = 120;
+    int receive_buffer_ms = 20;
     Hotkey ptt_hotkey;
 };
 

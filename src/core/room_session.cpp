@@ -46,7 +46,8 @@ bool valid_room_peer_settings(const RoomPeerOptions& options) {
         options.self_duck_threshold <= 1.0 &&
         options.self_duck_attack_ms >= 0 && options.self_duck_attack_ms <= 1000 &&
         options.self_duck_hold_ms >= 0 && options.self_duck_hold_ms <= 1000 &&
-        options.self_duck_release_ms >= 0 && options.self_duck_release_ms <= 5000;
+        options.self_duck_release_ms >= 0 && options.self_duck_release_ms <= 5000 &&
+        options.receive_buffer_ms >= 1 && options.receive_buffer_ms <= 500;
 }
 
 bool apply_room_control_line(

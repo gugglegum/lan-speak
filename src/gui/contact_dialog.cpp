@@ -24,10 +24,15 @@ constexpr int kDuckAttackId = 1012;
 constexpr int kDuckHoldId = 1013;
 constexpr int kDuckReleaseId = 1014;
 constexpr int kDuckThresholdId = 1015;
+constexpr int kReceiveBufferEditId = 1016;
+constexpr int kReceiveBufferSliderId = 1017;
 constexpr double kGainMin = 0.0;
 constexpr double kGainMax = 3.0;
 constexpr double kGainStep = 0.05;
+constexpr int kReceiveBufferMinMs = 5;
+constexpr int kReceiveBufferMaxMs = 100;
 constexpr wchar_t kClassName[] = L"LanSpeakContactDialog";
+constexpr wchar_t kReceiveBufferSliderClassName[] = L"LanSpeakReceiveBufferSlider";
 
 struct ContactDialogState {
     HINSTANCE instance = nullptr;
@@ -47,6 +52,10 @@ struct ContactDialogState {
     HWND duck_attack = nullptr;
     HWND duck_hold = nullptr;
     HWND duck_release = nullptr;
+    HWND receive_buffer_edit = nullptr;
+    HWND receive_buffer_slider = nullptr;
+    int receive_buffer_value_ms = 20;
+    bool syncing_receive_buffer = false;
 };
 
 const wchar_t* text(const ContactDialogState& state, TextId id) {
@@ -93,6 +102,31 @@ HWND add_button(
     return window;
 }
 
+HWND add_receive_buffer_slider(
+    HWND parent,
+    int id,
+    int x,
+    int y,
+    int width,
+    int height,
+    ContactDialogState* state) {
+    HWND window = CreateWindowExW(
+        0,
+        kReceiveBufferSliderClassName,
+        L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        x,
+        y,
+        width,
+        height,
+        parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(parent, GWLP_HINSTANCE)),
+        state);
+    set_font(window);
+    return window;
+}
+
 std::wstring trim(std::wstring value) {
     const std::size_t first = value.find_first_not_of(L" \t\r\n");
     if (first == std::wstring::npos) return {};
@@ -113,6 +147,156 @@ std::wstring window_text(HWND window) {
 std::wstring window_text_or(HWND window, const wchar_t* fallback) {
     std::wstring result = window_text(window);
     return result.empty() ? std::wstring(fallback) : result;
+}
+
+void set_receive_buffer_value(
+    ContactDialogState& state,
+    int value,
+    bool update_edit) {
+    state.receive_buffer_value_ms = std::clamp(
+        value,
+        kReceiveBufferMinMs,
+        kReceiveBufferMaxMs);
+    HWND receive_buffer_edit = state.receive_buffer_slider
+        ? GetDlgItem(GetParent(state.receive_buffer_slider), kReceiveBufferEditId)
+        : state.receive_buffer_edit;
+    if (update_edit && receive_buffer_edit) {
+        const std::wstring value_text = std::to_wstring(state.receive_buffer_value_ms);
+        if (window_text(receive_buffer_edit) != value_text) {
+            state.syncing_receive_buffer = true;
+            SetWindowTextW(receive_buffer_edit, value_text.c_str());
+            state.syncing_receive_buffer = false;
+        }
+    }
+    if (state.receive_buffer_slider) {
+        InvalidateRect(state.receive_buffer_slider, nullptr, FALSE);
+    }
+}
+
+int receive_buffer_value_from_x(HWND window, int x) {
+    RECT client{};
+    GetClientRect(window, &client);
+    constexpr int padding = 8;
+    const int usable_width = std::max(
+        1,
+        static_cast<int>(client.right - client.left) - padding * 2);
+    const int clamped_x = std::clamp(x - padding, 0, usable_width);
+    const double ratio = static_cast<double>(clamped_x) / static_cast<double>(usable_width);
+    return kReceiveBufferMinMs + static_cast<int>(std::lround(
+        ratio * static_cast<double>(kReceiveBufferMaxMs - kReceiveBufferMinMs)));
+}
+
+LRESULT CALLBACK receive_buffer_slider_proc(
+    HWND window,
+    UINT message,
+    WPARAM wparam,
+    LPARAM lparam) {
+    auto* state = reinterpret_cast<ContactDialogState*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    switch (message) {
+    case WM_NCCREATE: {
+        const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
+        SetWindowLongPtrW(
+            window,
+            GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+        return TRUE;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(window, &paint);
+        RECT client{};
+        GetClientRect(window, &client);
+        FillRect(dc, &client, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
+
+        constexpr int padding = 8;
+        const int center_y = (client.bottom - client.top) / 2;
+        RECT track{padding, center_y - 2, client.right - padding, center_y + 2};
+        HBRUSH track_brush = CreateSolidBrush(RGB(210, 218, 228));
+        FillRect(dc, &track, track_brush);
+        DeleteObject(track_brush);
+
+        const int value = state
+            ? state->receive_buffer_value_ms
+            : 20;
+        const double ratio = static_cast<double>(value - kReceiveBufferMinMs) /
+            static_cast<double>(kReceiveBufferMaxMs - kReceiveBufferMinMs);
+        const int thumb_x = padding + static_cast<int>(std::lround(
+            ratio * static_cast<double>(std::max(
+                1,
+                static_cast<int>(client.right) - padding * 2))));
+        RECT active_track = track;
+        active_track.right = thumb_x;
+        HBRUSH accent_brush = CreateSolidBrush(RGB(57, 120, 205));
+        FillRect(dc, &active_track, accent_brush);
+        HGDIOBJ old_brush = SelectObject(dc, accent_brush);
+        HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+        Ellipse(dc, thumb_x - 6, center_y - 6, thumb_x + 7, center_y + 7);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(accent_brush);
+
+        if (GetFocus() == window) {
+            RECT focus = client;
+            InflateRect(&focus, -1, -1);
+            DrawFocusRect(dc, &focus);
+        }
+        EndPaint(window, &paint);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONDOWN:
+        SetFocus(window);
+        SetCapture(window);
+        if (state) {
+            set_receive_buffer_value(
+                *state,
+                receive_buffer_value_from_x(window, static_cast<short>(LOWORD(lparam))),
+                true);
+        }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (state && (wparam & MK_LBUTTON) != 0 && GetCapture() == window) {
+            set_receive_buffer_value(
+                *state,
+                receive_buffer_value_from_x(window, static_cast<short>(LOWORD(lparam))),
+                true);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (state) {
+            set_receive_buffer_value(
+                *state,
+                receive_buffer_value_from_x(window, static_cast<short>(LOWORD(lparam))),
+                true);
+        }
+        if (GetCapture() == window) {
+            ReleaseCapture();
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (state) {
+            int value = state->receive_buffer_value_ms;
+            if (wparam == VK_LEFT || wparam == VK_DOWN) --value;
+            else if (wparam == VK_RIGHT || wparam == VK_UP) ++value;
+            else if (wparam == VK_PRIOR) value += 5;
+            else if (wparam == VK_NEXT) value -= 5;
+            else if (wparam == VK_HOME) value = kReceiveBufferMinMs;
+            else if (wparam == VK_END) value = kReceiveBufferMaxMs;
+            else return DefWindowProcW(window, message, wparam, lparam);
+            set_receive_buffer_value(*state, value, true);
+        }
+        return 0;
+    default:
+        return DefWindowProcW(window, message, wparam, lparam);
+    }
 }
 
 bool valid_port_text(const std::wstring& value) {
@@ -197,6 +381,11 @@ Contact contact_from_dialog(const ContactDialogState& state) {
     contact.duck_hold_ms = parse_int(window_text_or(state.duck_hold, L"80"), 80, 0, 1000);
     contact.duck_release_ms = parse_int(
         window_text_or(state.duck_release, L"120"), 120, 0, 5000);
+    contact.receive_buffer_ms = parse_int(
+        window_text_or(state.receive_buffer_edit, L"20"),
+        20,
+        kReceiveBufferMinMs,
+        kReceiveBufferMaxMs);
     contact.ptt_hotkey = state.contact.ptt_hotkey;
     return contact;
 }
@@ -252,10 +441,27 @@ void create_controls(HWND window, ContactDialogState& state) {
     state.duck_release = add_edit(
         window, kDuckReleaseId, std::to_wstring(state.contact.duck_release_ms).c_str(),
         395, 152, 55, 24);
+    add_label(window, text(state, TextId::receive_buffer_ms), 12, 194, 105, 20);
+    state.receive_buffer_slider = add_receive_buffer_slider(
+        window, kReceiveBufferSliderId, 115, 184, 225, 32, &state);
+    const int receive_buffer_ms = std::clamp(
+        state.contact.receive_buffer_ms,
+        kReceiveBufferMinMs,
+        kReceiveBufferMaxMs);
+    state.receive_buffer_value_ms = receive_buffer_ms;
+    state.receive_buffer_edit = add_edit(
+        window,
+        kReceiveBufferEditId,
+        std::to_wstring(receive_buffer_ms).c_str(),
+        350,
+        186,
+        50,
+        24);
+    add_label(window, text(state, TextId::milliseconds_short), 407, 190, 35, 20);
     add_button(
         window, IDOK, state.edit ? text(state, TextId::save) : text(state, TextId::add),
-        244, 210, 100, 28);
-    add_button(window, IDCANCEL, text(state, TextId::cancel), 354, 210, 90, 28);
+        244, 240, 100, 28);
+    add_button(window, IDCANCEL, text(state, TextId::cancel), 354, 240, 90, 28);
 }
 
 void restore_owner(ContactDialogState& state) {
@@ -287,6 +493,19 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         SetFocus(state->name);
         return 0;
     case WM_COMMAND:
+        if (state &&
+            LOWORD(wparam) == kReceiveBufferEditId &&
+            HIWORD(wparam) == EN_CHANGE &&
+            !state->syncing_receive_buffer) {
+            const std::wstring value = window_text(state->receive_buffer_edit);
+            wchar_t* end = nullptr;
+            const long parsed = std::wcstol(value.c_str(), &end, 10);
+            if (end != value.c_str() && *end == L'\0' &&
+                parsed >= kReceiveBufferMinMs && parsed <= kReceiveBufferMaxMs) {
+                set_receive_buffer_value(*state, static_cast<int>(parsed), false);
+            }
+            return 0;
+        }
         if (LOWORD(wparam) == IDOK) {
             if (state) {
                 Contact contact = contact_from_dialog(*state);
@@ -324,6 +543,15 @@ bool show_contact_dialog(
     Contact& result) {
     static bool registered = false;
     if (!registered) {
+        WNDCLASSEXW slider_class{};
+        slider_class.cbSize = sizeof(slider_class);
+        slider_class.lpfnWndProc = receive_buffer_slider_proc;
+        slider_class.hInstance = instance;
+        slider_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        slider_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        slider_class.lpszClassName = kReceiveBufferSliderClassName;
+        if (!RegisterClassExW(&slider_class)) return false;
+
         WNDCLASSEXW window_class{};
         window_class.cbSize = sizeof(window_class);
         window_class.lpfnWndProc = window_proc;
@@ -350,7 +578,7 @@ bool show_contact_dialog(
             edit ? TextId::edit_contact_title : TextId::add_contact_title,
             language),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 470, 300,
+        CW_USEDEFAULT, CW_USEDEFAULT, 470, 330,
         owner, nullptr, instance, &state);
     if (!dialog) return false;
 

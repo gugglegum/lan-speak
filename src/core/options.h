@@ -19,6 +19,7 @@
 namespace lanspeak::core {
 
 inline constexpr std::uint16_t kDefaultUdpPort = 49740;
+inline constexpr int kDefaultReceiveBufferMs = 20;
 
 struct RoomPeerOptions {
     std::wstring host = L"127.0.0.1";
@@ -29,6 +30,7 @@ struct RoomPeerOptions {
     int self_duck_attack_ms = 8;
     int self_duck_hold_ms = 80;
     int self_duck_release_ms = 120;
+    int receive_buffer_ms = kDefaultReceiveBufferMs;
     bool global_ptt_enabled = true;
 };
 

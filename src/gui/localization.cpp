@@ -105,6 +105,10 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Удерж., мс" : L"Hold ms";
     case TextId::release_ms:
         return ru ? L"Восст., мс" : L"Release ms";
+    case TextId::receive_buffer_ms:
+        return ru ? L"Буфер приёма" : L"Receive buffer";
+    case TextId::milliseconds_short:
+        return ru ? L"мс" : L"ms";
     case TextId::save:
         return ru ? L"Сохранить" : L"Save";
     case TextId::add:

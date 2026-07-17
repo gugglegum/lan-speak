@@ -87,6 +87,9 @@ Contact parse_contact(const std::vector<std::wstring>& fields, bool legacy) {
         contact.ptt_hotkey = decode_hotkey(common::unescape_field(fields[11]));
     }
     if (!legacy && fields.size() >= 13) contact.global_ptt_enabled = parse_bool(fields[12], true);
+    if (!legacy && fields.size() >= 14) {
+        contact.receive_buffer_ms = static_cast<int>(parse_long(fields[13], 20, 5, 100));
+    }
     return contact;
 }
 
@@ -136,7 +139,8 @@ std::string serialize_settings(const AppSettings& settings) {
             std::to_wstring(contact.duck_release_ms) + L"\t" +
             (contact.muted ? L"1" : L"0") + L"\t" +
             common::escape_field(encode_hotkey(contact.ptt_hotkey)) + L"\t" +
-            (contact.global_ptt_enabled ? L"1" : L"0");
+            (contact.global_ptt_enabled ? L"1" : L"0") + L"\t" +
+            std::to_wstring(contact.receive_buffer_ms);
         output += "contact=" + common::wide_to_utf8(fields) + "\n";
     }
     return output;

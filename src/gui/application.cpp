@@ -3042,6 +3042,7 @@ std::wstring build_command_line(
         args.push_back(std::to_wstring(contact.duck_hold_ms));
         args.push_back(std::to_wstring(contact.duck_release_ms));
         args.push_back(contact.global_ptt_enabled ? L"1" : L"0");
+        args.push_back(std::to_wstring(contact.receive_buffer_ms));
     }
 
     return join_command_line(args);
@@ -3866,8 +3867,10 @@ LRESULT CALLBACK push_to_talk_button_proc(HWND window, UINT message, WPARAM wpar
     return result;
 }
 
-bool contact_endpoint_changed(const Contact& before, const Contact& after) {
-    return before.host != after.host || before.port != after.port;
+bool contact_requires_core_restart(const Contact& before, const Contact& after) {
+    return before.host != after.host ||
+        before.port != after.port ||
+        before.receive_buffer_ms != after.receive_buffer_ms;
 }
 
 double contact_gain_from_slider_point(HWND panel, int index, POINT point) {
@@ -3998,7 +4001,7 @@ void update_selected_contact_from_editor() {
         g_app.contacts[static_cast<size_t>(index)] = contact;
         refresh_contact_list(index);
         save_settings();
-        if (contact_endpoint_changed(previous, contact) ||
+        if (contact_requires_core_restart(previous, contact) ||
             !send_contact_runtime_settings(static_cast<size_t>(index), contact)) {
             restart_core_after_settings_change();
         }
