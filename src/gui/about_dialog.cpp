@@ -1,6 +1,7 @@
 #include "gui/about_dialog.h"
 
 #include "gui/localization.h"
+#include "lanspeak_version.h"
 
 #include <shellapi.h>
 
@@ -116,9 +117,11 @@ void create_controls(HWND window, AboutDialogState& state) {
         nullptr);
     SendMessageW(icon, STM_SETIMAGE, IMAGE_ICON, reinterpret_cast<LPARAM>(state.large_icon));
 
+    const std::wstring product_version =
+        std::wstring(text(state, TextId::about_product_version)) + LANSPEAK_VERSION_WSTRING;
     HWND heading = add_static(
         window,
-        text(state, TextId::about_product_version),
+        product_version.c_str(),
         88,
         20,
         310,

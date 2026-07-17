@@ -21,6 +21,7 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 
 - Replaced the group talk mode selector with a `Talk continuously` checkbox. The group talk button now always transmits only while held, while the checkbox latches and releases the same transmission state.
 - Default input and output device selection now uses the Windows `console` role, matching the devices selected on the main Sound settings page.
+- Development and pre-release builds now derive their displayed and Windows executable versions from an exact SemVer Git tag or a CMake override without modifying tracked source files.
 
 ## [1.0.0] - 2026-07-13
 

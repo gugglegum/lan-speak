@@ -61,6 +61,25 @@ ctest --test-dir build -C Release --output-on-failure
 
 MSVC-сборки используют статический runtime (`/MT` для Release и `/MTd` для Debug), поэтому готовым EXE не требуется установленный Visual C++ Redistributable.
 
+### Версии сборок
+
+Нетегированная сборка для разработки получает версию `1.1.0-alpha-dev`. Если текущий коммит имеет точный SemVer-тег, например `1.1.0-alpha.1`, CMake использует этот тег в окне «О программе» и в ресурсах версии обоих исполняемых файлов Windows.
+
+Версию также можно передать при конфигурации, не изменяя отслеживаемые файлы:
+
+```powershell
+cmake -S . -B build -DLANSPEAK_VERSION_OVERRIDE=1.1.0-alpha.1
+```
+
+Для выпуска alpha-сборки нужно отметить проверенный коммит тегом и собрать именно этот коммит:
+
+```powershell
+git tag -a 1.1.0-alpha.1 -m "LAN Speak 1.1.0 alpha 1"
+git push origin 1.1.0-alpha.1
+```
+
+Релизы GitHub для тегов `alpha`, `beta` и `rc` следует отмечать как предварительные.
+
 ### CLion
 
 Откройте корень репозитория как CMake-проект и выберите toolchain **Visual Studio**. MinGW не является поддерживаемым toolchain для этой реализации под Windows/WASAPI. Основные CMake-targets: `LanSpeak`, `LanSpeakCore` и `LanSpeakTests`.

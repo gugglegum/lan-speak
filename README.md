@@ -61,6 +61,25 @@ The resulting executables are normally placed in `build/Release/`:
 
 MSVC builds use the static runtime (`/MT` for Release and `/MTd` for Debug), so the Visual C++ Redistributable is not required for the resulting executables.
 
+### Build Versions
+
+An untagged development build uses `1.1.0-alpha-dev`. When the current commit has an exact SemVer tag such as `1.1.0-alpha.1`, CMake uses that tag for the About dialog and the Windows version information embedded in both executables.
+
+The version can also be injected without changing tracked files:
+
+```powershell
+cmake -S . -B build -DLANSPEAK_VERSION_OVERRIDE=1.1.0-alpha.1
+```
+
+To publish an alpha snapshot, tag the tested commit and build that exact commit:
+
+```powershell
+git tag -a 1.1.0-alpha.1 -m "LAN Speak 1.1.0 alpha 1"
+git push origin 1.1.0-alpha.1
+```
+
+GitHub releases for `alpha`, `beta`, and `rc` tags should be marked as pre-releases.
+
 ### CLion
 
 Open the repository root as a CMake project and select a **Visual Studio** toolchain. MinGW is not a supported toolchain for this Windows/WASAPI implementation. The main CMake targets are `LanSpeak`, `LanSpeakCore`, and `LanSpeakTests`.

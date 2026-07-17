@@ -1,8 +1,77 @@
 cmake_minimum_required(VERSION 4.2)
-project(LanSpeak)
+project(LanSpeak VERSION 1.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(LANSPEAK_VERSION_OVERRIDE "" CACHE STRING "Override the LAN Speak build version")
+set(LANSPEAK_VERSION "")
+if(NOT LANSPEAK_VERSION_OVERRIDE STREQUAL "")
+    set(LANSPEAK_VERSION "${LANSPEAK_VERSION_OVERRIDE}")
+elseif(DEFINED ENV{LANSPEAK_VERSION} AND NOT "$ENV{LANSPEAK_VERSION}" STREQUAL "")
+    set(LANSPEAK_VERSION "$ENV{LANSPEAK_VERSION}")
+else()
+    find_package(Git QUIET)
+    if(Git_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --exact-match --match "[0-9]*.[0-9]*.[0-9]*"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE LANSPEAK_GIT_TAG_RESULT
+            OUTPUT_VARIABLE LANSPEAK_GIT_TAG
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(LANSPEAK_GIT_TAG_RESULT EQUAL 0)
+            set(LANSPEAK_VERSION "${LANSPEAK_GIT_TAG}")
+        endif()
+    endif()
+endif()
+
+if(LANSPEAK_VERSION STREQUAL "")
+    set(LANSPEAK_VERSION "${PROJECT_VERSION}-alpha-dev")
+endif()
+if(NOT LANSPEAK_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")
+    message(FATAL_ERROR "Invalid LAN Speak version: ${LANSPEAK_VERSION}")
+endif()
+
+set(LANSPEAK_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set(LANSPEAK_VERSION_MINOR "${CMAKE_MATCH_2}")
+set(LANSPEAK_VERSION_PATCH "${CMAKE_MATCH_3}")
+set(LANSPEAK_VERSION_REVISION 0)
+if(LANSPEAK_VERSION MATCHES "-(alpha|beta|rc)\\.([0-9]+)")
+    set(LANSPEAK_VERSION_REVISION "${CMAKE_MATCH_2}")
+endif()
+foreach(component
+        LANSPEAK_VERSION_MAJOR
+        LANSPEAK_VERSION_MINOR
+        LANSPEAK_VERSION_PATCH
+        LANSPEAK_VERSION_REVISION)
+    if(${component} GREATER 65535)
+        message(FATAL_ERROR "${component} must fit in a Windows VERSIONINFO component")
+    endif()
+endforeach()
+
+set(LANSPEAK_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${LANSPEAK_GENERATED_DIR}")
+configure_file(
+    cmake/lanspeak_version.h.in
+    "${LANSPEAK_GENERATED_DIR}/lanspeak_version.h"
+    @ONLY)
+
+set(LANSPEAK_FILE_DESCRIPTION "LAN Speak")
+set(LANSPEAK_INTERNAL_NAME "LanSpeak")
+set(LANSPEAK_ORIGINAL_FILENAME "LanSpeak.exe")
+configure_file(
+    cmake/lanspeak_version.rc.in
+    "${LANSPEAK_GENERATED_DIR}/LanSpeakVersion.rc"
+    @ONLY)
+set(LANSPEAK_FILE_DESCRIPTION "LAN Speak Core")
+set(LANSPEAK_INTERNAL_NAME "LanSpeakCore")
+set(LANSPEAK_ORIGINAL_FILENAME "LanSpeakCore.exe")
+configure_file(
+    cmake/lanspeak_version.rc.in
+    "${LANSPEAK_GENERATED_DIR}/LanSpeakCoreVersion.rc"
+    @ONLY)
+message(STATUS "LAN Speak build version: ${LANSPEAK_VERSION}")
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -48,18 +117,20 @@ add_library(LanSpeakGuiSupport STATIC
     src/gui/tray_icon.cpp
     src/gui/ui_icons.cpp
     src/gui/vu_math.cpp)
-target_include_directories(LanSpeakGuiSupport PUBLIC src)
+target_include_directories(LanSpeakGuiSupport PUBLIC src "${LANSPEAK_GENERATED_DIR}")
 
 add_executable(LanSpeakCore
     main.cpp
-    src/core/application.cpp)
+    src/core/application.cpp
+    "${LANSPEAK_GENERATED_DIR}/LanSpeakCoreVersion.rc")
 target_compile_definitions(LanSpeakCore PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(LanSpeakCore PRIVATE LanSpeakCommon LanSpeakCoreSupport ole32 uuid avrt ws2_32)
 
 add_executable(LanSpeak WIN32
     gui.cpp
     src/gui/application.cpp
-    LanSpeakGui.rc)
+    LanSpeakGui.rc
+    "${LANSPEAK_GENERATED_DIR}/LanSpeakVersion.rc")
 target_include_directories(LanSpeak PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(LanSpeak PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(LanSpeak PRIVATE LanSpeakCommon LanSpeakGuiSupport user32 gdi32 shell32 comctl32)

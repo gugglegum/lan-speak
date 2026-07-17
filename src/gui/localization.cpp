@@ -225,7 +225,7 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
     case TextId::about:
         return ru ? L"О программе" : L"About";
     case TextId::about_product_version:
-        return ru ? L"LAN Speak версия 1.0.0" : L"LAN Speak version 1.0.0";
+        return ru ? L"LAN Speak версия " : L"LAN Speak version ";
     case TextId::about_author:
         return ru ? L"Автор программы: Paul Melekhov" : L"Author: Paul Melekhov";
     case TextId::about_github:

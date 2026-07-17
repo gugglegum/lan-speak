@@ -664,10 +664,10 @@ void test_about_localization() {
     CHECK(std::wstring(localized_text(TextId::about, LanguageSetting::russian)) == L"О программе");
     CHECK(std::wstring(localized_text(
               TextId::about_product_version,
-              LanguageSetting::english)) == L"LAN Speak version 1.0.0");
+              LanguageSetting::english)) == L"LAN Speak version ");
     CHECK(std::wstring(localized_text(
               TextId::about_product_version,
-              LanguageSetting::russian)) == L"LAN Speak версия 1.0.0");
+              LanguageSetting::russian)) == L"LAN Speak версия ");
     CHECK(std::wstring(localized_text(
               TextId::audio_latency_diagnostics,
               LanguageSetting::english)) == L"Audio latency diagnostics");

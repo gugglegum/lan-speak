@@ -1,0 +1,34 @@
+#include <winver.h>
+
+1 VERSIONINFO
+ FILEVERSION @LANSPEAK_VERSION_MAJOR@,@LANSPEAK_VERSION_MINOR@,@LANSPEAK_VERSION_PATCH@,@LANSPEAK_VERSION_REVISION@
+ PRODUCTVERSION @LANSPEAK_VERSION_MAJOR@,@LANSPEAK_VERSION_MINOR@,@LANSPEAK_VERSION_PATCH@,@LANSPEAK_VERSION_REVISION@
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Paul Melekhov\0"
+            VALUE "FileDescription", "@LANSPEAK_FILE_DESCRIPTION@\0"
+            VALUE "FileVersion", "@LANSPEAK_VERSION@\0"
+            VALUE "InternalName", "@LANSPEAK_INTERNAL_NAME@\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 Paul Melekhov\0"
+            VALUE "OriginalFilename", "@LANSPEAK_ORIGINAL_FILENAME@\0"
+            VALUE "ProductName", "LAN Speak\0"
+            VALUE "ProductVersion", "@LANSPEAK_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
