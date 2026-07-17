@@ -4318,6 +4318,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                         IDC_CONTEXT_EDIT, text(TextId::edit));
             AppendMenuW(menu, MF_STRING | (clicked_contact ? MF_ENABLED : MF_GRAYED),
                         IDC_CONTEXT_DELETE, text(TextId::delete_contact));
+            if (clicked_contact) {
+                SetMenuDefaultItem(menu, IDC_CONTEXT_EDIT, FALSE);
+            }
             const UINT command = TrackPopupMenu(
                 menu,
                 TPM_RETURNCMD | TPM_RIGHTBUTTON,
