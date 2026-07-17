@@ -1688,16 +1688,18 @@ void draw_contact_ptt_button(
     SetTextColor(dc, text_color);
     RECT text_rect = button_rect;
     if (latched) {
-        text_rect.right -= 4;
+        text_rect.right -= 7;
     }
     DrawTextW(dc, L"PTT", 3, &text_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
 
     if (latched) {
-        HPEN lock_pen = g_app.gdi_objects.pen(text_color, 1);
+        const COLORREF lock_color = RGB(255, 202, 58);
+        HPEN lock_pen = g_app.gdi_objects.pen(lock_color, 1);
+        HBRUSH lock_brush = g_app.gdi_objects.brush(lock_color);
         HGDIOBJ old_lock_pen = SelectObject(dc, lock_pen);
-        HGDIOBJ old_lock_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        const int left = button_rect.right - 9;
-        const int top = button_rect.top + 3;
+        HGDIOBJ old_lock_brush = SelectObject(dc, lock_brush);
+        const int left = button_rect.right - 8;
+        const int top = button_rect.top + 2;
         MoveToEx(dc, left + 1, top + 5, nullptr);
         LineTo(dc, left + 1, top + 3);
         LineTo(dc, left + 2, top + 1);
