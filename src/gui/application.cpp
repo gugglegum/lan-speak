@@ -3004,6 +3004,8 @@ std::wstring build_command_line(
     std::vector<std::wstring> args;
     args.push_back(exe_path);
 
+    args.push_back(L"--capture-role");
+    args.push_back(L"console");
     args.push_back(L"--render-role");
     args.push_back(L"console");
 

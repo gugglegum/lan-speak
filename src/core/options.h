@@ -62,8 +62,8 @@ struct ProbeOptions {
     double input_gain = 1.0;
     double output_gain = 1.0;
     double tone_frequency = 440.0;
-    ERole capture_role = eCommunications;
-    ERole render_role = eCommunications;
+    ERole capture_role = eConsole;
+    ERole render_role = eConsole;
     std::optional<std::wstring> capture_device_selector;
     std::optional<std::wstring> render_device_selector;
     std::vector<RoomPeerOptions> room_peers;

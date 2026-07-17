@@ -585,6 +585,8 @@ void test_room_peer_receive_buffer_options() {
 
     const ProbeOptions options = parse_options(static_cast<int>(argv.size()), argv.data());
     CHECK(!options.show_help);
+    CHECK(options.capture_role == eConsole);
+    CHECK(options.render_role == eConsole);
     CHECK(options.room_peers.size() == 2);
     CHECK(options.room_peers[0].receive_buffer_ms == 45);
     CHECK(!options.room_peers[0].global_ptt_enabled);

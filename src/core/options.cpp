@@ -818,7 +818,7 @@ void print_usage() {
     std::wcout << L"  Add --input-muted to start room sending with microphone audio muted until a control command opens it.\n";
     std::wcout << L"  Use --test-seconds N with --room only for bounded tests.\n";
     std::wcout << L"--input-gain and --output-gain accept 0..8, default 1.0.\n";
-    std::wcout << L"--capture-role and --render-role accept console, multimedia, communications; default communications.\n";
+    std::wcout << L"--capture-role and --render-role accept console, multimedia, communications; default console.\n";
     std::wcout << L"--capture-device and --render-device accept an active endpoint index, name fragment, or endpoint id.\n";
     std::wcout << L"--self-duck-db accepts 0..60 dB, default 0/off; attack 8 ms, hold 80 ms, release 120 ms.\n";
     std::wcout << L"--self-duck-threshold accepts 0..1, default 0.02.\n";
