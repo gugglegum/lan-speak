@@ -34,6 +34,7 @@ target_include_directories(LanSpeakCoreSupport PUBLIC src)
 
 add_library(LanSpeakGuiSupport STATIC
     src/gui/about_dialog.cpp
+    src/gui/audio_latency_dialog.cpp
     src/gui/contact_dialog.cpp
     src/gui/contact_list_model.cpp
     src/gui/core_process_controller.cpp

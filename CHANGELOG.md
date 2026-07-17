@@ -15,6 +15,7 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 
 - Added a per-contact `Talk continuously` latch to the contact context menu. A latched contact remains active after the PTT button is released and is marked with a lock on the contact card.
 - Added a per-contact receive buffer setting from 5 to 100 ms for tuning latency and resilience to network jitter.
+- Added an audio latency diagnostics dialog showing the active input and output devices, stream format, engine period, endpoint buffer, WASAPI stream latency, stream mode, and current render padding.
 
 ### Changed
 

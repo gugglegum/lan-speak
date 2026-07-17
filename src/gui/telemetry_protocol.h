@@ -18,9 +18,24 @@ struct MeterTelemetry {
     bool stream_active = false;
 };
 
+struct AudioEndpointTelemetry {
+    bool valid = false;
+    std::string name_utf8;
+    std::uint32_t sample_rate = 0;
+    std::uint16_t channels = 0;
+    std::uint16_t bits_per_sample = 0;
+    double engine_period_ms = -1.0;
+    double buffer_ms = -1.0;
+    double stream_latency_ms = -1.0;
+    bool low_latency_shared = false;
+    double current_padding_ms = -1.0;
+};
+
 struct TelemetrySnapshot {
     MeterTelemetry local;
     std::vector<MeterTelemetry> peers;
+    AudioEndpointTelemetry capture;
+    AudioEndpointTelemetry render;
     std::uint64_t revision = 0;
 };
 

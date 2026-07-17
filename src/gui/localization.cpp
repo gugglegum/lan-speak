@@ -166,6 +166,38 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Глобальные хоткеи" : L"Global Hotkeys";
     case TextId::debug_console:
         return ru ? L"Отладочная консоль" : L"Debug console";
+    case TextId::audio_latency_diagnostics:
+        return ru ? L"Диагностика задержек звука" : L"Audio latency diagnostics";
+    case TextId::device_name:
+        return ru ? L"Устройство" : L"Device";
+    case TextId::audio_format:
+        return ru ? L"Формат" : L"Format";
+    case TextId::audio_engine_period:
+        return ru ? L"Период аудиодвижка" : L"Audio engine period";
+    case TextId::endpoint_buffer:
+        return ru ? L"Буфер устройства" : L"Endpoint buffer";
+    case TextId::maximum_stream_latency:
+        return ru ? L"Максимальная задержка потока WASAPI" : L"Maximum WASAPI stream latency";
+    case TextId::current_render_padding:
+        return ru ? L"Текущее заполнение буфера" : L"Current buffer padding";
+    case TextId::stream_mode:
+        return ru ? L"Режим потока" : L"Stream mode";
+    case TextId::low_latency_shared_mode:
+        return ru ? L"IAudioClient3, shared low-latency" : L"IAudioClient3 shared low-latency";
+    case TextId::standard_shared_mode:
+        return ru ? L"Стандартный shared mode" : L"Standard shared mode";
+    case TextId::diagnostics_unavailable:
+        return ru ? L"Данные пока недоступны." : L"Data is not available yet.";
+    case TextId::diagnostics_not_available_short:
+        return ru ? L"н/д" : L"N/A";
+    case TextId::channels_short:
+        return ru ? L"кан." : L"ch";
+    case TextId::bits_short:
+        return ru ? L"бит" : L"bit";
+    case TextId::latency_diagnostics_note:
+        return ru
+            ? L"Показаны параметры аудиостека Windows. Физическая задержка АЦП/ЦАП устройства может быть выше."
+            : L"These are Windows audio-stack values. The device's physical ADC/DAC latency may be higher.";
     case TextId::ptt_for_all:
         return ru ? L"PTT для всех" : L"PTT for All";
     case TextId::osd_me:

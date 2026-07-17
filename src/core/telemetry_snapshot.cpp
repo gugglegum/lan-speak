@@ -6,8 +6,48 @@
 #include <iomanip>
 #include <locale>
 #include <sstream>
+#include <string_view>
 
 namespace lanspeak::core {
+namespace {
+
+std::string escape_telemetry_field(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+        case '\\': escaped += "\\\\"; break;
+        case '\t': escaped += "\\t"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\n': escaped += "\\n"; break;
+        default: escaped.push_back(ch); break;
+        }
+    }
+    return escaped;
+}
+
+void serialize_audio_endpoint(
+    std::ostringstream& stream,
+    std::string_view kind,
+    const AudioEndpointDiagnostics& diagnostics,
+    double padding_ms) {
+    if (!diagnostics.valid) {
+        return;
+    }
+    stream << std::setprecision(3)
+           << kind << "\t"
+           << escape_telemetry_field(diagnostics.name_utf8) << "\t"
+           << diagnostics.sample_rate << "\t"
+           << diagnostics.channels << "\t"
+           << diagnostics.bits_per_sample << "\t"
+           << diagnostics.engine_period_ms << "\t"
+           << diagnostics.buffer_ms << "\t"
+           << diagnostics.stream_latency_ms << "\t"
+           << (diagnostics.low_latency_shared ? 1 : 0) << "\t"
+           << padding_ms << "\n";
+}
+
+} // namespace
 
 TelemetrySnapshot::TelemetrySnapshot(std::size_t peer_count)
     : peers_(peer_count == 0 ? nullptr : std::make_unique<PeerMeter[]>(peer_count)),
@@ -44,6 +84,21 @@ void TelemetrySnapshot::mark_peer_stream(std::size_t peer_index, std::uint64_t n
     }
 }
 
+void TelemetrySnapshot::set_audio_endpoint_diagnostics(
+    AudioEndpointKind kind,
+    AudioEndpointDiagnostics diagnostics) {
+    std::lock_guard lock(audio_diagnostics_mutex_);
+    if (kind == AudioEndpointKind::capture) {
+        capture_diagnostics_ = std::move(diagnostics);
+    } else {
+        render_diagnostics_ = std::move(diagnostics);
+    }
+}
+
+void TelemetrySnapshot::update_render_padding_ms(double padding_ms) {
+    render_padding_ms_.store(padding_ms, std::memory_order_relaxed);
+}
+
 std::string TelemetrySnapshot::serialize(
     std::uint64_t now_ms,
     std::uint64_t stream_hold_ms) {
@@ -63,6 +118,15 @@ std::string TelemetrySnapshot::serialize(
                << peers_[index].level_db.load(std::memory_order_relaxed) << "\t"
                << (peers_[index].voice_active.load(std::memory_order_relaxed) ? 1 : 0) << "\t"
                << (stream_active ? 1 : 0) << "\n";
+    }
+    {
+        std::lock_guard lock(audio_diagnostics_mutex_);
+        serialize_audio_endpoint(stream, "audio_input", capture_diagnostics_, -1.0);
+        serialize_audio_endpoint(
+            stream,
+            "audio_output",
+            render_diagnostics_,
+            render_padding_ms_.load(std::memory_order_relaxed));
     }
     return stream.str();
 }

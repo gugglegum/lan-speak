@@ -19,6 +19,7 @@
 #include <wrl/client.h>
 
 #include "common/line_buffer.h"
+#include "common/text_codec.h"
 #include "core/application.h"
 #include "core/audio_math.h"
 #include "core/diagnostics.h"
@@ -3053,7 +3054,8 @@ int run_room_send_test(
         return 1;
     }
 
-    std::wcout << L"Capture device: " << get_friendly_name(*device.Get()) << L"\n";
+    const std::wstring capture_device_name = get_friendly_name(*device.Get());
+    std::wcout << L"Capture device: " << capture_device_name << L"\n";
 
     ComPtr<IAudioClient> format_client;
     HRESULT hr = activate_audio_client(*device.Get(), format_client);
@@ -3102,6 +3104,25 @@ int run_room_send_test(
     if (FAILED(hr)) {
         std::wcout << L"GetBufferSize failed: " << hresult_text(hr) << L"\n";
         return 1;
+    }
+
+    REFERENCE_TIME stream_latency = 0;
+    const HRESULT stream_latency_result = client->GetStreamLatency(&stream_latency);
+    if (telemetry_snapshot != nullptr) {
+        telemetry_snapshot->set_audio_endpoint_diagnostics(
+            lanspeak::core::AudioEndpointKind::capture,
+            lanspeak::core::AudioEndpointDiagnostics{
+                true,
+                lanspeak::common::wide_to_utf8(capture_device_name),
+                mix_format->nSamplesPerSec,
+                mix_format->nChannels,
+                mix_format->wBitsPerSample,
+                requested_period_frames != 0
+                    ? frames_to_ms(requested_period_frames, mix_format->nSamplesPerSec)
+                    : -1.0,
+                frames_to_ms(buffer_frames, mix_format->nSamplesPerSec),
+                SUCCEEDED(stream_latency_result) ? reference_time_to_ms(stream_latency) : -1.0,
+                used_audio_client3});
     }
 
     std::wcout << L"Initialized: "
@@ -3600,7 +3621,8 @@ int run_room_test(
         return 1;
     }
 
-    std::wcout << L"Render device: " << get_friendly_name(*device.Get()) << L"\n";
+    const std::wstring render_device_name = get_friendly_name(*device.Get());
+    std::wcout << L"Render device: " << render_device_name << L"\n";
 
     ComPtr<IAudioClient> format_client;
     HRESULT hr = activate_audio_client(*device.Get(), format_client);
@@ -3656,6 +3678,9 @@ int run_room_test(
         return 1;
     }
 
+    REFERENCE_TIME stream_latency = 0;
+    const HRESULT stream_latency_result = client->GetStreamLatency(&stream_latency);
+
     ComPtr<IAudioRenderClient> render_client;
     hr = client->GetService(IID_PPV_ARGS(&render_client));
     if (FAILED(hr)) {
@@ -3685,6 +3710,20 @@ int run_room_test(
     RoomMixer room_mixer;
     room_mixer.reserve(buffer_frames);
     TelemetrySnapshot telemetry_snapshot(peers.size());
+    telemetry_snapshot.set_audio_endpoint_diagnostics(
+        lanspeak::core::AudioEndpointKind::render,
+        lanspeak::core::AudioEndpointDiagnostics{
+            true,
+            lanspeak::common::wide_to_utf8(render_device_name),
+            mix_format->nSamplesPerSec,
+            mix_format->nChannels,
+            mix_format->wBitsPerSample,
+            requested_period_frames != 0
+                ? frames_to_ms(requested_period_frames, mix_format->nSamplesPerSec)
+                : -1.0,
+            frames_to_ms(buffer_frames, mix_format->nSamplesPerSec),
+            SUCCEEDED(stream_latency_result) ? reference_time_to_ms(stream_latency) : -1.0,
+            used_audio_client3});
     std::atomic_bool stop{false};
     std::atomic_bool input_muted{start_input_muted};
     std::atomic_bool receiver_ready{false};
@@ -3848,6 +3887,7 @@ int run_room_test(
             }
             stats.render_padding_min = std::min<std::uint64_t>(stats.render_padding_min, padding);
             stats.render_padding_max = std::max<std::uint64_t>(stats.render_padding_max, padding);
+            telemetry_snapshot.update_render_padding_ms(frames_to_ms(padding, sample_rate));
 
             const UINT32 available_frames = buffer_frames > padding ? buffer_frames - padding : 0;
             if (available_frames > 0) {

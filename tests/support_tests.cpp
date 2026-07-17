@@ -365,6 +365,15 @@ void test_core_telemetry_snapshot() {
     source.update_peer_meter(0, -12.5, true);
     source.mark_peer_stream(0, 1000);
     source.update_peer_meter(1, -60.0, false);
+    source.set_audio_endpoint_diagnostics(
+        lanspeak::core::AudioEndpointKind::capture,
+        lanspeak::core::AudioEndpointDiagnostics{
+            true, "Microphone\\Input", 48000, 2, 32, 2.67, 5.83, 8.0, true});
+    source.set_audio_endpoint_diagnostics(
+        lanspeak::core::AudioEndpointKind::render,
+        lanspeak::core::AudioEndpointDiagnostics{
+            true, "Headphones", 44100, 2, 32, 10.0, 22.0, 25.0, false});
+    source.update_render_padding_ms(3.25);
 
     lanspeak::gui::TelemetryParser parser;
     CHECK(parser.append(source.serialize(1050, 200)));
@@ -376,6 +385,16 @@ void test_core_telemetry_snapshot() {
     CHECK(first.peers[0].voice_active);
     CHECK(first.peers[0].stream_active);
     CHECK(!first.peers[1].stream_active);
+    CHECK(first.capture.valid);
+    CHECK(first.capture.name_utf8 == "Microphone\\Input");
+    CHECK(first.capture.sample_rate == 48000);
+    CHECK(first.capture.low_latency_shared);
+    CHECK(close_to(first.capture.buffer_ms, 5.83, 0.01));
+    CHECK(first.render.valid);
+    CHECK(first.render.name_utf8 == "Headphones");
+    CHECK(first.render.sample_rate == 44100);
+    CHECK(!first.render.low_latency_shared);
+    CHECK(close_to(first.render.current_padding_ms, 3.25, 0.01));
 
     CHECK(parser.append(source.serialize(1300, 200)));
     const auto second = parser.snapshot();
@@ -576,7 +595,9 @@ void test_fragmented_telemetry_snapshot() {
     lanspeak::gui::TelemetryParser parser;
     CHECK(!parser.append("local_level\t-18"));
     CHECK(parser.append(".5\t1\npeer_level\t0\t-90\t0\t0\npeer_"));
-    CHECK(parser.append("level\t1\t-24\t1\t1\n"));
+    CHECK(parser.append(
+        "level\t1\t-24\t1\t1\n"
+        "audio_input\tUSB\\tMic\t48000\t2\t32\t2.7\t5.8\t8.1\t1\t-1\n"));
     const auto& snapshot = parser.snapshot();
     CHECK(snapshot.local.valid);
     CHECK(close_to(snapshot.local.level_db, -18.5));
@@ -584,6 +605,10 @@ void test_fragmented_telemetry_snapshot() {
     CHECK(snapshot.peers.size() == 2);
     CHECK(!snapshot.peers[0].voice_active);
     CHECK(snapshot.peers[1].stream_active);
+    CHECK(snapshot.capture.valid);
+    CHECK(snapshot.capture.name_utf8 == "USB\tMic");
+    CHECK(snapshot.capture.sample_rate == 48000);
+    CHECK(snapshot.capture.low_latency_shared);
 }
 
 void test_gdi_cache_handle_count_is_stable() {
@@ -641,6 +666,12 @@ void test_about_localization() {
     CHECK(std::wstring(localized_text(
               TextId::about_product_version,
               LanguageSetting::russian)) == L"LAN Speak версия 1.0.0");
+    CHECK(std::wstring(localized_text(
+              TextId::audio_latency_diagnostics,
+              LanguageSetting::english)) == L"Audio latency diagnostics");
+    CHECK(std::wstring(localized_text(
+              TextId::audio_latency_diagnostics,
+              LanguageSetting::russian)) == L"Диагностика задержек звука");
 }
 
 } // namespace

@@ -4,6 +4,7 @@
 #include "resource.h"
 
 #include "gui/about_dialog.h"
+#include "gui/audio_latency_dialog.h"
 #include "gui/application.h"
 #include "gui/contact_dialog.h"
 #include "gui/contact_list_model.h"
@@ -88,6 +89,7 @@ constexpr int IDC_MENU_LANGUAGE_RUSSIAN = 6003;
 constexpr int IDC_MENU_GLOBAL_HOTKEYS = 6004;
 constexpr int IDC_MENU_DEBUG_CONSOLE = 6005;
 constexpr int IDC_MENU_ABOUT = 6006;
+constexpr int IDC_MENU_AUDIO_LATENCY = 6007;
 constexpr int IDC_TRAY_SHOW = 7001;
 constexpr int IDC_TRAY_EXIT = 7002;
 constexpr int kMaxMenuDevices = 500;
@@ -204,6 +206,8 @@ struct ApplicationState {
     double local_level_db = -90.0;
     bool local_voice_active = false;
     ULONGLONG local_level_update_ms = 0;
+    lanspeak::gui::AudioEndpointTelemetry capture_diagnostics;
+    lanspeak::gui::AudioEndpointTelemetry render_diagnostics;
 };
 
 ApplicationState g_app;
@@ -1575,6 +1579,11 @@ void rebuild_menu_bar() {
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(input_menu), text(TextId::capture_device));
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(output_menu), text(TextId::render_device));
     AppendMenuW(settings_menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(
+        settings_menu,
+        MF_STRING,
+        IDC_MENU_AUDIO_LATENCY,
+        text(TextId::audio_latency_diagnostics));
     AppendMenuW(settings_menu, MF_STRING, IDC_MENU_GLOBAL_HOTKEYS, text(TextId::global_hotkeys));
     append_checked_menu_item(
         settings_menu,
@@ -3455,6 +3464,12 @@ void set_stopping_state() {
 }
 
 void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) {
+    if (snapshot.capture.valid) {
+        g_app.capture_diagnostics = snapshot.capture;
+    }
+    if (snapshot.render.valid) {
+        g_app.render_diagnostics = snapshot.render;
+    }
     if (snapshot.local.valid) {
         update_local_meter(
             snapshot.local.level_db,
@@ -3784,6 +3799,9 @@ void apply_global_talk_sources() {
     if (active && !can_start_global_talk()) {
         return;
     }
+
+    g_app.capture_diagnostics = {};
+    g_app.render_diagnostics = {};
 
     const bool target_muted = !active;
     if (g_app.push_to_talk_down == active && g_app.input_muted == target_muted) {
@@ -4217,6 +4235,17 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         if (command_id == IDC_MENU_GLOBAL_HOTKEYS) {
             show_global_hotkeys_dialog(window);
+            return 0;
+        }
+        if (command_id == IDC_MENU_AUDIO_LATENCY) {
+            lanspeak::gui::show_audio_latency_dialog(
+                g_app.instance,
+                window,
+                load_app_large_icon(),
+                load_app_small_icon(),
+                g_app.language_setting,
+                g_app.capture_diagnostics,
+                g_app.render_diagnostics);
             return 0;
         }
         if (command_id == IDC_MENU_DEBUG_CONSOLE) {
