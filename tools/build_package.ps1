@@ -126,6 +126,9 @@ foreach ($executable in @($guiExe, $coreExe)) {
     }
 }
 
+Copy-Item -LiteralPath $guiExe -Destination (Join-Path $outputRoot 'LanSpeak.exe') -Force
+Copy-Item -LiteralPath $coreExe -Destination (Join-Path $outputRoot 'LanSpeakCore.exe') -Force
+
 $archiveBaseName = "LanSpeak-$Version-win-x64"
 $stagingRoot = Join-Path $buildRoot 'package'
 $packageRoot = Join-Path $stagingRoot $archiveBaseName
