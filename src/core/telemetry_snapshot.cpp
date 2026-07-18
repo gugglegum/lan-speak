@@ -84,6 +84,15 @@ void TelemetrySnapshot::mark_peer_stream(std::size_t peer_index, std::uint64_t n
     }
 }
 
+void TelemetrySnapshot::update_peer_presence(
+    std::size_t peer_index,
+    PeerPresenceState state,
+    double rtt_ms) {
+    if (peer_index >= peer_count_) return;
+    peers_[peer_index].presence_state.store(static_cast<int>(state), std::memory_order_relaxed);
+    peers_[peer_index].presence_rtt_ms.store(rtt_ms, std::memory_order_relaxed);
+}
+
 void TelemetrySnapshot::set_audio_endpoint_diagnostics(
     AudioEndpointKind kind,
     AudioEndpointDiagnostics diagnostics) {
@@ -118,6 +127,9 @@ std::string TelemetrySnapshot::serialize(
                << peers_[index].level_db.load(std::memory_order_relaxed) << "\t"
                << (peers_[index].voice_active.load(std::memory_order_relaxed) ? 1 : 0) << "\t"
                << (stream_active ? 1 : 0) << "\n";
+        stream << "peer_presence\t" << index << "\t"
+               << peers_[index].presence_state.load(std::memory_order_relaxed) << "\t"
+               << peers_[index].presence_rtt_ms.load(std::memory_order_relaxed) << "\n";
     }
     {
         std::lock_guard lock(audio_diagnostics_mutex_);

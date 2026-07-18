@@ -15,6 +15,7 @@ LanSpeak uses shared-mode WASAPI and raw PCM over UDP. There is no central serve
 - Raw mono PCM16 over UDP with a small jitter buffer and no codec delay.
 - Full-mesh rooms for two or more participants without a server.
 - Configurable local UDP port and IPv4 interface binding.
+- Per-contact online presence with low-frequency peer-to-peer UDP probes and RTT diagnostics.
 - Global and per-contact push-to-talk, including system-wide keyboard and mouse hotkeys.
 - Per-contact gain, mute, and inclusion in or exclusion from group PTT.
 - Per-contact receiver-side self-ducking with configurable attack, hold, and release.

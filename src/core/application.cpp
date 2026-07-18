@@ -27,10 +27,12 @@
 #include "core/options.h"
 #include "core/pcm_audio.h"
 #include "core/peer_router.h"
+#include "core/presence_tracker.h"
 #include "core/room_mixer.h"
 #include "core/room_session.h"
 #include "core/telemetry_snapshot.h"
 #include "core/udp_audio_packet.h"
+#include "core/udp_presence_packet.h"
 #include "core/wasapi_audio.h"
 #include "core/wasapi_devices.h"
 
@@ -52,6 +54,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -66,12 +69,17 @@ using lanspeak::core::JitterStats;
 using lanspeak::core::EndpointCandidate;
 using lanspeak::core::ProbeOptions;
 using lanspeak::core::PeerRouter;
+using lanspeak::core::PeerPresenceState;
+using lanspeak::core::PresenceAction;
+using lanspeak::core::PresenceTracker;
 using lanspeak::core::RoomMixer;
 using lanspeak::core::RoomPeerControl;
 using lanspeak::core::RoomPeerOptions;
 using lanspeak::core::SampleKind;
 using lanspeak::core::TelemetrySnapshot;
 using lanspeak::core::UdpAudioPacketHeader;
+using lanspeak::core::UdpPresencePacket;
+using lanspeak::core::UdpPresenceType;
 using lanspeak::core::audio_level_dbfs;
 using lanspeak::core::build_mono_pcm16_payload;
 using lanspeak::core::collect_active_endpoints;
@@ -582,6 +590,13 @@ struct IpAddressKey {
     auto operator<=>(const IpAddressKey&) const = default;
 };
 
+struct IpEndpointKey {
+    IpAddressKey address;
+    std::uint16_t port = 0;
+
+    auto operator<=>(const IpEndpointKey&) const = default;
+};
+
 std::optional<IpAddressKey> binary_ip_key(const sockaddr_storage& address) {
     IpAddressKey key;
     key.family = address.ss_family;
@@ -594,6 +609,20 @@ std::optional<IpAddressKey> binary_ip_key(const sockaddr_storage& address) {
         const auto& ipv6 = reinterpret_cast<const sockaddr_in6&>(address);
         std::memcpy(key.bytes.data(), &ipv6.sin6_addr, sizeof(ipv6.sin6_addr));
         return key;
+    }
+    return std::nullopt;
+}
+
+std::optional<IpEndpointKey> binary_endpoint_key(const sockaddr_storage& address) {
+    const std::optional<IpAddressKey> key = binary_ip_key(address);
+    if (!key) return std::nullopt;
+    if (address.ss_family == AF_INET) {
+        const auto& ipv4 = reinterpret_cast<const sockaddr_in&>(address);
+        return IpEndpointKey{*key, ntohs(ipv4.sin_port)};
+    }
+    if (address.ss_family == AF_INET6) {
+        const auto& ipv6 = reinterpret_cast<const sockaddr_in6&>(address);
+        return IpEndpointKey{*key, ntohs(ipv6.sin6_port)};
     }
     return std::nullopt;
 }
@@ -2253,6 +2282,7 @@ struct RoomPeerRuntime {
     int target_length = 0;
     std::wstring ip_key;
     IpAddressKey binary_ip_key{};
+    IpEndpointKey binary_endpoint_key{};
     std::unique_ptr<JitterBuffer> jitter;
     UdpReceiveStats receive;
     std::atomic<std::uint64_t> debug_datagrams{0};
@@ -2388,11 +2418,13 @@ bool prepare_room_peers(
 
         peer->ip_key = sockaddr_ip_key(peer->target);
         const std::optional<IpAddressKey> address_key = binary_ip_key(peer->target);
-        if (peer->ip_key.empty() || !address_key) {
+        const std::optional<IpEndpointKey> endpoint_key = binary_endpoint_key(peer->target);
+        if (peer->ip_key.empty() || !address_key || !endpoint_key) {
             std::wcout << L"Could not build IP key for peer " << option.host << L":" << option.port << L"\n";
             return false;
         }
         peer->binary_ip_key = *address_key;
+        peer->binary_endpoint_key = *endpoint_key;
 
         peers.push_back(std::move(peer));
     }
@@ -2477,12 +2509,65 @@ bool queue_udp_audio_packet_for_peer(
     return true;
 }
 
+std::uint64_t presence_entropy() {
+    std::random_device random;
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    std::uint64_t value = static_cast<std::uint64_t>(random()) << 32u;
+    value ^= static_cast<std::uint64_t>(random());
+    value ^= static_cast<std::uint64_t>(counter.QuadPart);
+    value ^= GetTickCount64() << 17u;
+    value ^= static_cast<std::uint64_t>(GetCurrentProcessId()) << 1u;
+    return value == 0 ? 1 : value;
+}
+
+bool send_presence_action(
+    SOCKET socket,
+    const std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
+    std::uint64_t session_id,
+    const PresenceAction& action,
+    std::uint64_t& send_errors) {
+    if (action.peer_index >= peers.size()) return false;
+    UdpPresencePacket packet{};
+    packet.type = action.type;
+    packet.session_id = session_id;
+    packet.nonce = action.nonce;
+    const lanspeak::core::UdpPresenceDatagram datagram =
+        lanspeak::core::serialize_udp_presence_packet(packet);
+    const RoomPeerRuntime& peer = *peers[action.peer_index];
+    const int sent = sendto(
+        socket,
+        reinterpret_cast<const char*>(datagram.data()),
+        static_cast<int>(datagram.size()),
+        0,
+        reinterpret_cast<const sockaddr*>(&peer.target),
+        peer.target_length);
+    if (sent == static_cast<int>(datagram.size())) return true;
+    ++send_errors;
+    if (send_errors <= 5 || send_errors % 100 == 0) {
+        std::wcout << L"Presence send failed for peer [" << action.peer_index
+                   << L"]: " << winsock_error_text() << L", count=" << send_errors << L"\n";
+    }
+    return false;
+}
+
+void update_presence_telemetry(
+    const PresenceTracker& tracker,
+    TelemetrySnapshot& telemetry_snapshot,
+    std::size_t peer_count) {
+    for (std::size_t index = 0; index < peer_count; ++index) {
+        const lanspeak::core::PeerPresenceSnapshot snapshot = tracker.snapshot(index);
+        telemetry_snapshot.update_peer_presence(index, snapshot.state, snapshot.rtt_ms);
+    }
+}
+
 void receive_room_udp_audio(
     std::uint16_t port,
     const std::wstring& bind_address,
     std::uint32_t expected_sample_rate,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
     TelemetrySnapshot& telemetry_snapshot,
+    std::atomic_bool& presence_enabled,
     std::atomic_bool& stop,
     std::atomic_bool& ready,
     std::atomic_bool& failed) {
@@ -2515,11 +2600,13 @@ void receive_room_udp_audio(
     }
 
     std::map<IpAddressKey, size_t> peer_by_ip;
+    std::map<IpEndpointKey, size_t> peer_by_endpoint;
     for (size_t index = 0; index < peers.size(); ++index) {
         const IpAddressKey& key = peers[index]->binary_ip_key;
         if (peer_by_ip.find(key) == peer_by_ip.end()) {
             peer_by_ip[key] = index;
         }
+        peer_by_endpoint[peers[index]->binary_endpoint_key] = index;
     }
 
     LARGE_INTEGER frequency{};
@@ -2528,9 +2615,30 @@ void receive_room_udp_audio(
     std::vector<bool> have_previous_receive(peers.size(), false);
     std::vector<char> buffer(65536);
     std::uint64_t unknown_datagrams = 0;
+    std::uint64_t presence_send_errors = 0;
+    const std::uint64_t session_id = presence_entropy();
+    PresenceTracker presence(peers.size(), session_id, presence_entropy());
+    bool presence_started = false;
     ready = true;
 
     while (!stop.load()) {
+        const std::uint64_t before_wait_ms = GetTickCount64();
+        if (!presence_started && presence_enabled.load(std::memory_order_relaxed)) {
+            presence.start(before_wait_ms);
+            presence_started = true;
+        }
+        if (presence_started) {
+            for (const PresenceAction& action : presence.tick(before_wait_ms)) {
+                send_presence_action(
+                    socket_handle.value,
+                    peers,
+                    presence.session_id(),
+                    action,
+                    presence_send_errors);
+            }
+            update_presence_telemetry(presence, telemetry_snapshot, peers.size());
+        }
+
         if (!wait_udp_readable(socket_handle.value, 50)) {
             continue;
         }
@@ -2550,7 +2658,41 @@ void receive_room_udp_audio(
                 std::wcout << L"room receiver recvfrom failed: " << winsock_error_text(error) << L"\n";
                 failed = true;
             }
-            return;
+            break;
+        }
+
+        UdpPresencePacket presence_packet{};
+        const bool is_presence_packet = lanspeak::core::validate_udp_presence_packet(
+            std::span(
+                reinterpret_cast<const std::byte*>(buffer.data()),
+                static_cast<std::size_t>(std::max(bytes, 0))),
+            presence_packet);
+        if (is_presence_packet) {
+            const std::optional<IpEndpointKey> endpoint_key = binary_endpoint_key(from);
+            const auto endpoint_it = endpoint_key
+                ? peer_by_endpoint.find(*endpoint_key)
+                : peer_by_endpoint.end();
+            if (endpoint_it == peer_by_endpoint.end()) {
+                ++unknown_datagrams;
+                continue;
+            }
+            if (presence_started) {
+                const std::uint64_t now_ms = GetTickCount64();
+                const std::optional<PresenceAction> response = presence.on_packet(
+                    endpoint_it->second,
+                    presence_packet,
+                    now_ms);
+                if (response) {
+                    send_presence_action(
+                        socket_handle.value,
+                        peers,
+                        presence.session_id(),
+                        *response,
+                        presence_send_errors);
+                }
+                update_presence_telemetry(presence, telemetry_snapshot, peers.size());
+            }
+            continue;
         }
 
         const std::optional<IpAddressKey> from_binary_key = binary_ip_key(from);
@@ -2593,11 +2735,26 @@ void receive_room_udp_audio(
             talk_active);
         if (queued) {
             peer.debug_valid_packets.fetch_add(1, std::memory_order_relaxed);
+            if (presence_started) {
+                presence.on_audio_packet(peer_index, GetTickCount64());
+                update_presence_telemetry(presence, telemetry_snapshot, peers.size());
+            }
             if (talk_active) {
                 telemetry_snapshot.mark_peer_stream(peer_index, GetTickCount64());
             }
         } else {
             peer.debug_invalid_packets.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    if (presence_started) {
+        for (const PresenceAction& action : presence.shutdown()) {
+            send_presence_action(
+                socket_handle.value,
+                peers,
+                presence.session_id(),
+                action,
+                presence_send_errors);
         }
     }
 }
@@ -3748,6 +3905,7 @@ int run_room_test(
     std::atomic_bool input_muted{start_input_muted};
     std::atomic_bool receiver_ready{false};
     std::atomic_bool receiver_failed{false};
+    std::atomic_bool presence_enabled{false};
     int send_result = 0;
     std::thread sender;
     std::thread control_reader;
@@ -3760,6 +3918,7 @@ int run_room_test(
             sample_rate,
             peers,
             telemetry_snapshot,
+            presence_enabled,
             stop,
             receiver_ready,
             receiver_failed);
@@ -3873,6 +4032,7 @@ int run_room_test(
         std::wcout << L"Render Start failed: " << hresult_text(hr) << L"\n";
         return 1;
     }
+    presence_enabled.store(true, std::memory_order_relaxed);
 
     int play_result = 0;
     while (true) {

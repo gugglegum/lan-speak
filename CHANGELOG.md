@@ -13,6 +13,7 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 
 ### Added
 
+- Added per-contact online presence using low-frequency peer-to-peer UDP `PING/PONG/GOODBYE` messages. Contact cards show a status dot, while the tooltip reports the exact state and RTT.
 - Global and per-contact PTT hotkeys can now use the right, middle, Mouse 4, or Mouse 5 button. Mouse hotkeys remain active while keyboard modifiers are held.
 - Added a per-contact `Talk continuously` latch to the contact context menu. A latched contact remains active after the PTT button is released and is marked with a lock on the contact card.
 - Added a per-contact receive buffer setting from 5 to 100 ms for tuning latency and resilience to network jitter.

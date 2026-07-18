@@ -92,10 +92,12 @@ add_library(LanSpeakCoreSupport STATIC
     src/core/options.cpp
     src/core/pcm_audio.cpp
     src/core/peer_router.cpp
+    src/core/presence_tracker.cpp
     src/core/room_mixer.cpp
     src/core/room_session.cpp
     src/core/telemetry_snapshot.cpp
     src/core/udp_audio_packet.cpp
+    src/core/udp_presence_packet.cpp
     src/core/wasapi_audio.cpp
     src/core/wasapi_devices.cpp)
 

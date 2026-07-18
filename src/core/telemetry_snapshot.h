@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/presence_tracker.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +37,10 @@ public:
     void accumulate_local_peak(double peak);
     void update_peer_meter(std::size_t peer_index, double level_db, bool voice_active);
     void mark_peer_stream(std::size_t peer_index, std::uint64_t now_ms);
+    void update_peer_presence(
+        std::size_t peer_index,
+        PeerPresenceState state,
+        double rtt_ms);
     void set_audio_endpoint_diagnostics(
         AudioEndpointKind kind,
         AudioEndpointDiagnostics diagnostics);
@@ -49,6 +55,8 @@ private:
         std::atomic<double> level_db{-90.0};
         std::atomic_bool voice_active{false};
         std::atomic<std::uint64_t> last_stream_packet_ms{0};
+        std::atomic<int> presence_state{static_cast<int>(PeerPresenceState::unknown)};
+        std::atomic<double> presence_rtt_ms{-1.0};
     };
 
     std::atomic<double> local_pending_peak_{0.0};

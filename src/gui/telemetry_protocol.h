@@ -18,6 +18,18 @@ struct MeterTelemetry {
     bool stream_active = false;
 };
 
+enum class PeerPresenceState : std::uint8_t {
+    unknown = 0,
+    online = 1,
+    offline = 2
+};
+
+struct PresenceTelemetry {
+    bool valid = false;
+    PeerPresenceState state = PeerPresenceState::unknown;
+    double rtt_ms = -1.0;
+};
+
 struct AudioEndpointTelemetry {
     bool valid = false;
     std::string name_utf8;
@@ -34,6 +46,7 @@ struct AudioEndpointTelemetry {
 struct TelemetrySnapshot {
     MeterTelemetry local;
     std::vector<MeterTelemetry> peers;
+    std::vector<PresenceTelemetry> peer_presence;
     AudioEndpointTelemetry capture;
     AudioEndpointTelemetry render;
     std::uint64_t revision = 0;

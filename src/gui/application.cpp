@@ -171,6 +171,7 @@ struct ApplicationState {
     int dragging_gain_index = -1;
     int mouse_contact_ptt_index = -1;
     int contact_tooltip_index = -1;
+    bool contact_tooltip_presence = false;
     bool contact_tooltip_visible = false;
     std::wstring contact_tooltip_text;
 
@@ -215,6 +216,7 @@ struct ApplicationState {
 
     std::vector<Contact> contacts;
     lanspeak::gui::ContactMeterBank contact_meters;
+    std::vector<lanspeak::gui::PresenceTelemetry> contact_presence;
     std::vector<unsigned int> contact_ptt_refs;
     std::vector<bool> contact_ptt_latched;
     double local_level_db = -90.0;
@@ -933,12 +935,14 @@ double contact_gain_slider_ratio(const Contact& contact) {
 
 void sync_contact_meter_state() {
     g_app.contact_meters.sync(g_app.contacts.size());
+    g_app.contact_presence.resize(g_app.contacts.size());
     g_app.contact_ptt_refs.resize(g_app.contacts.size(), 0);
     g_app.contact_ptt_latched.resize(g_app.contacts.size(), false);
 }
 
 void reset_contact_meter_state() {
     g_app.contact_meters.reset();
+    std::fill(g_app.contact_presence.begin(), g_app.contact_presence.end(), lanspeak::gui::PresenceTelemetry{});
     g_app.local_level_db = -90.0;
     g_app.local_voice_active = false;
     g_app.local_level_update_ms = 0;
@@ -1285,13 +1289,16 @@ void hide_contact_tooltip() {
 void update_contact_tooltip_target(HWND panel, POINT point) {
     int index = -1;
     const ContactHitAction action = contact_hit_test(panel, point, index);
-    const int target_index = action == ContactHitAction::global_ptt ? index : -1;
-    if (target_index == g_app.contact_tooltip_index) {
+    const bool presence = action == ContactHitAction::select;
+    const int target_index = action == ContactHitAction::global_ptt || presence ? index : -1;
+    if (target_index == g_app.contact_tooltip_index &&
+        presence == g_app.contact_tooltip_presence) {
         return;
     }
 
     hide_contact_tooltip();
     g_app.contact_tooltip_index = target_index;
+    g_app.contact_tooltip_presence = presence;
 
     TRACKMOUSEEVENT tracking{};
     tracking.cbSize = sizeof(tracking);
@@ -1312,13 +1319,42 @@ void show_contact_tooltip(HWND panel) {
     POINT client_point = point;
     ScreenToClient(panel, &client_point);
     int index = -1;
-    if (contact_hit_test(panel, client_point, index) != ContactHitAction::global_ptt ||
+    const ContactHitAction expected_action = g_app.contact_tooltip_presence
+        ? ContactHitAction::select
+        : ContactHitAction::global_ptt;
+    if (contact_hit_test(panel, client_point, index) != expected_action ||
         index != g_app.contact_tooltip_index) {
         return;
     }
 
-    const bool enabled = g_app.contacts[static_cast<size_t>(index)].global_ptt_enabled;
-    g_app.contact_tooltip_text = text(enabled ? TextId::exclude_from_global_ptt : TextId::include_in_global_ptt);
+    if (g_app.contact_tooltip_presence) {
+        const size_t contact_index = static_cast<size_t>(index);
+        const auto* presence = contact_index < g_app.contact_presence.size()
+            ? &g_app.contact_presence[contact_index]
+            : nullptr;
+        if (presence && presence->valid &&
+            presence->state == lanspeak::gui::PeerPresenceState::online) {
+            g_app.contact_tooltip_text = text(TextId::presence_online);
+            if (presence->rtt_ms >= 0.0) {
+                g_app.contact_tooltip_text += L", ";
+                g_app.contact_tooltip_text += text(TextId::round_trip_time);
+                g_app.contact_tooltip_text += L": ";
+                g_app.contact_tooltip_text += std::to_wstring(
+                    static_cast<long long>(std::llround(presence->rtt_ms)));
+                g_app.contact_tooltip_text += L" ";
+                g_app.contact_tooltip_text += text(TextId::milliseconds_short);
+            }
+        } else if (presence && presence->valid &&
+                   presence->state == lanspeak::gui::PeerPresenceState::offline) {
+            g_app.contact_tooltip_text = text(TextId::presence_offline);
+        } else {
+            g_app.contact_tooltip_text = text(TextId::presence_unknown);
+        }
+    } else {
+        const bool enabled = g_app.contacts[static_cast<size_t>(index)].global_ptt_enabled;
+        g_app.contact_tooltip_text = text(
+            enabled ? TextId::exclude_from_global_ptt : TextId::include_in_global_ptt);
+    }
     TOOLINFOW info = contact_tooltip_info(panel);
     info.lpszText = g_app.contact_tooltip_text.data();
     SendMessageW(g_app.contact_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
@@ -2118,7 +2154,7 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
     }
 
     RECT text_rect = card_rect;
-    text_rect.left += 16;
+    text_rect.left += 30;
     const RECT mute_button = contact_mute_button_rect_from_card(card_rect);
     const RECT ptt_button = contact_ptt_button_rect_from_card(card_rect);
     const RECT global_ptt_button = contact_global_ptt_button_rect_from_card(card_rect);
@@ -2130,6 +2166,23 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
     text_rect.right = std::max<LONG>(text_rect.left + 24, static_cast<LONG>(controls_left - 12));
     text_rect.top += 2;
     text_rect.bottom -= 2;
+
+    const bool online = index < g_app.contact_presence.size() &&
+        g_app.contact_presence[index].valid &&
+        g_app.contact_presence[index].state == lanspeak::gui::PeerPresenceState::online;
+    const COLORREF presence_color = online
+        ? RGB(42, 168, 91)
+        : (selected ? RGB(135, 148, 164) : RGB(166, 176, 188));
+    RECT presence_rect{
+        card_rect.left + 13,
+        card_rect.top + (card_rect.bottom - card_rect.top) / 2 - 4,
+        card_rect.left + 21,
+        card_rect.top + (card_rect.bottom - card_rect.top) / 2 + 4};
+    HGDIOBJ old_presence_brush = SelectObject(dc, g_app.gdi_objects.brush(presence_color));
+    HGDIOBJ old_presence_pen = SelectObject(dc, g_app.gdi_objects.pen(presence_color));
+    Ellipse(dc, presence_rect.left, presence_rect.top, presence_rect.right, presence_rect.bottom);
+    SelectObject(dc, old_presence_pen);
+    SelectObject(dc, old_presence_brush);
 
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text_color);
@@ -3686,6 +3739,19 @@ void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) 
                 true);
         }
     }
+    const std::size_t presence_count = std::min(
+        g_app.contacts.size(),
+        snapshot.peer_presence.size());
+    for (std::size_t index = 0; index < presence_count; ++index) {
+        const lanspeak::gui::PresenceTelemetry& incoming = snapshot.peer_presence[index];
+        if (!incoming.valid || index >= g_app.contact_presence.size()) continue;
+        lanspeak::gui::PresenceTelemetry& current = g_app.contact_presence[index];
+        if (!current.valid || current.state != incoming.state ||
+            std::abs(current.rtt_ms - incoming.rtt_ms) >= 0.5) {
+            current = incoming;
+            invalidate_contact_row(index);
+        }
+    }
     update_osd_overlay();
 }
 
@@ -4220,6 +4286,7 @@ void add_contact_from_editor() {
             contact)) {
         g_app.contacts.push_back(contact);
         g_app.contact_meters.append();
+        g_app.contact_presence.push_back({});
         g_app.contact_ptt_refs.push_back(0);
         g_app.contact_ptt_latched.push_back(false);
         refresh_contact_list(static_cast<int>(g_app.contacts.size()) - 1);
@@ -4262,6 +4329,9 @@ void remove_selected_contact() {
     reset_contact_push_to_talk_state();
     g_app.contacts.erase(g_app.contacts.begin() + index);
     g_app.contact_meters.erase(static_cast<size_t>(index));
+    if (static_cast<size_t>(index) < g_app.contact_presence.size()) {
+        g_app.contact_presence.erase(g_app.contact_presence.begin() + index);
+    }
     if (static_cast<size_t>(index) < g_app.contact_ptt_refs.size()) {
         g_app.contact_ptt_refs.erase(g_app.contact_ptt_refs.begin() + index);
     }

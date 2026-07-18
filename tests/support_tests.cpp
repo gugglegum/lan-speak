@@ -4,10 +4,12 @@
 #include "core/options.h"
 #include "core/pcm_audio.h"
 #include "core/peer_router.h"
+#include "core/presence_tracker.h"
 #include "core/room_mixer.h"
 #include "core/room_session.h"
 #include "core/telemetry_snapshot.h"
 #include "core/udp_audio_packet.h"
+#include "core/udp_presence_packet.h"
 #include "core/wasapi_audio.h"
 #include "gui/contact_list_model.h"
 #include "gui/vu_math.h"
@@ -157,6 +159,145 @@ void test_udp_packet_validation() {
     source.payload_bytes = 7;
     std::memcpy(invalid.data(), &source, sizeof(source));
     CHECK(!validate_udp_audio_packet(invalid.data(), invalid.size(), 48000, parsed));
+}
+
+void test_udp_presence_packet_validation() {
+    using namespace lanspeak::core;
+    UdpPresencePacket source{};
+    source.type = UdpPresenceType::ping;
+    source.session_id = 123;
+    source.nonce = 456;
+
+    UdpPresencePacket parsed{};
+    const UdpPresenceDatagram datagram = serialize_udp_presence_packet(source);
+    CHECK(validate_udp_presence_packet(datagram, parsed));
+    CHECK(parsed.type == UdpPresenceType::ping);
+    CHECK(parsed.session_id == 123);
+    CHECK(parsed.nonce == 456);
+    CHECK(!validate_udp_presence_packet(std::span(datagram).first(datagram.size() - 1), parsed));
+    std::array<std::byte, sizeof(UdpPresencePacket) + 1> oversized{};
+    std::copy(datagram.begin(), datagram.end(), oversized.begin());
+    CHECK(!validate_udp_presence_packet(oversized, parsed));
+
+    source.type = UdpPresenceType::pong;
+    CHECK(validate_udp_presence_packet(serialize_udp_presence_packet(source), parsed));
+    CHECK(parsed.type == UdpPresenceType::pong);
+    CHECK(parsed.nonce == source.nonce);
+    source.type = UdpPresenceType::ping;
+
+    auto invalid_packet = source;
+    invalid_packet.magic = 0;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.version = 2;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.header_size = 0;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.reserved = 1;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.type = static_cast<UdpPresenceType>(99);
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.session_id = 0;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+    invalid_packet = source;
+    invalid_packet.nonce = 0;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(invalid_packet), parsed));
+
+    source.type = UdpPresenceType::goodbye;
+    source.nonce = 0;
+    CHECK(validate_udp_presence_packet(serialize_udp_presence_packet(source), parsed));
+    source.nonce = 1;
+    CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(source), parsed));
+}
+
+void test_presence_tracker_lifecycle() {
+    using namespace lanspeak::core;
+
+    PresenceTracker retries(2, 10, 20);
+    retries.start(100);
+    auto actions = retries.tick(100);
+    CHECK(actions.size() == 2);
+    CHECK(actions[0].type == UdpPresenceType::ping);
+    CHECK(actions[0].nonce != 0);
+    CHECK(retries.tick(1'099).empty());
+    CHECK(retries.tick(1'100).size() == 2);
+    CHECK(retries.tick(3'099).empty());
+    CHECK(retries.tick(3'100).size() == 2);
+    CHECK(retries.tick(5'099).empty());
+    CHECK(retries.tick(5'100).empty());
+    CHECK(retries.snapshot(0).state == PeerPresenceState::unknown);
+    CHECK(retries.snapshot(1).state == PeerPresenceState::unknown);
+    CHECK(retries.tick(65'099).empty());
+    CHECK(retries.tick(125'101).size() == 2);
+
+    PresenceTracker tracker(1, 100, 200);
+    tracker.start(1'000);
+    actions = tracker.tick(1'000);
+    CHECK(actions.size() == 1);
+    const std::uint64_t nonce = actions[0].nonce;
+
+    UdpPresencePacket pong{};
+    pong.type = UdpPresenceType::pong;
+    pong.session_id = 900;
+    pong.nonce = nonce + 1;
+    tracker.on_packet(0, pong, 1'020);
+    CHECK(tracker.snapshot(0).state == PeerPresenceState::unknown);
+    pong.nonce = nonce;
+    tracker.on_packet(0, pong, 1'042);
+    CHECK(tracker.snapshot(0).state == PeerPresenceState::online);
+    CHECK(tracker.snapshot(0).remote_session_id == 900);
+    CHECK(close_to(tracker.snapshot(0).rtt_ms, 42.0));
+    CHECK(tracker.tick(26'041).empty());
+    CHECK(tracker.tick(36'043).size() == 1);
+
+    UdpPresencePacket ping{};
+    ping.type = UdpPresenceType::ping;
+    ping.session_id = 901;
+    ping.nonce = 777;
+    const auto response = tracker.on_packet(0, ping, 36'044);
+    CHECK(response.has_value());
+    CHECK(response->type == UdpPresenceType::pong);
+    CHECK(response->nonce == ping.nonce);
+    CHECK(tracker.snapshot(0).remote_session_id == 901);
+    CHECK(tracker.snapshot(0).rtt_ms < 0.0);
+    CHECK(tracker.tick(61'043).empty());
+
+    UdpPresencePacket goodbye{};
+    goodbye.type = UdpPresenceType::goodbye;
+    goodbye.session_id = 900;
+    goodbye.nonce = 0;
+    tracker.on_packet(0, goodbye, 61'044);
+    CHECK(tracker.snapshot(0).state == PeerPresenceState::online);
+    goodbye.session_id = 901;
+    tracker.on_packet(0, goodbye, 61'045);
+    CHECK(tracker.snapshot(0).state == PeerPresenceState::offline);
+
+    tracker.on_audio_packet(0, 61'046);
+    CHECK(tracker.snapshot(0).state == PeerPresenceState::online);
+    CHECK(tracker.snapshot(0).remote_session_id == 901);
+    CHECK(tracker.tick(86'045).empty());
+
+    PresenceTracker lost_after_online(1, 300, 400);
+    lost_after_online.start(0);
+    const auto initial_ping = lost_after_online.tick(0);
+    CHECK(initial_ping.size() == 1);
+    pong.session_id = 902;
+    pong.nonce = initial_ping[0].nonce;
+    lost_after_online.on_packet(0, pong, 5);
+    CHECK(lost_after_online.tick(35'006).size() == 1);
+    CHECK(lost_after_online.tick(36'006).size() == 1);
+    CHECK(lost_after_online.tick(38'006).size() == 1);
+    CHECK(lost_after_online.tick(40'006).empty());
+    CHECK(lost_after_online.snapshot(0).state == PeerPresenceState::offline);
+
+    const auto shutdown = tracker.shutdown();
+    CHECK(shutdown.size() == 1);
+    CHECK(shutdown[0].type == UdpPresenceType::goodbye);
+    CHECK(shutdown[0].nonce == 0);
 }
 
 void test_pcm_conversion_and_resampling() {
@@ -356,6 +497,7 @@ void test_hot_paths_do_not_allocate_after_warmup() {
         telemetry.accumulate_local_peak(0.25);
         telemetry.update_peer_meter(0, -18.0, true);
         telemetry.mark_peer_stream(0, 1000);
+        telemetry.update_peer_presence(0, PeerPresenceState::online, 1.0);
         allocations = scope.count();
     }
     CHECK(allocations == 0);
@@ -366,7 +508,9 @@ void test_core_telemetry_snapshot() {
     source.accumulate_local_peak(0.1);
     source.update_peer_meter(0, -12.5, true);
     source.mark_peer_stream(0, 1000);
+    source.update_peer_presence(0, lanspeak::core::PeerPresenceState::online, 2.5);
     source.update_peer_meter(1, -60.0, false);
+    source.update_peer_presence(1, lanspeak::core::PeerPresenceState::offline, -1.0);
     source.set_audio_endpoint_diagnostics(
         lanspeak::core::AudioEndpointKind::capture,
         lanspeak::core::AudioEndpointDiagnostics{
@@ -387,6 +531,10 @@ void test_core_telemetry_snapshot() {
     CHECK(first.peers[0].voice_active);
     CHECK(first.peers[0].stream_active);
     CHECK(!first.peers[1].stream_active);
+    CHECK(first.peer_presence.size() == 2);
+    CHECK(first.peer_presence[0].state == lanspeak::gui::PeerPresenceState::online);
+    CHECK(close_to(first.peer_presence[0].rtt_ms, 2.5));
+    CHECK(first.peer_presence[1].state == lanspeak::gui::PeerPresenceState::offline);
     CHECK(first.capture.valid);
     CHECK(first.capture.name_utf8 == "Microphone\\Input");
     CHECK(first.capture.sample_rate == 48000);
@@ -619,6 +767,7 @@ void test_fragmented_telemetry_snapshot() {
     CHECK(parser.append(".5\t1\npeer_level\t0\t-90\t0\t0\npeer_"));
     CHECK(parser.append(
         "level\t1\t-24\t1\t1\n"
+        "peer_presence\t0\t1\t3.5\n"
         "audio_input\tUSB\\tMic\t48000\t2\t32\t2.7\t5.8\t8.1\t1\t-1\n"));
     const auto& snapshot = parser.snapshot();
     CHECK(snapshot.local.valid);
@@ -627,10 +776,19 @@ void test_fragmented_telemetry_snapshot() {
     CHECK(snapshot.peers.size() == 2);
     CHECK(!snapshot.peers[0].voice_active);
     CHECK(snapshot.peers[1].stream_active);
+    CHECK(snapshot.peer_presence.size() == 1);
+    CHECK(snapshot.peer_presence[0].state == lanspeak::gui::PeerPresenceState::online);
+    CHECK(close_to(snapshot.peer_presence[0].rtt_ms, 3.5));
     CHECK(snapshot.capture.valid);
     CHECK(snapshot.capture.name_utf8 == "USB\tMic");
     CHECK(snapshot.capture.sample_rate == 48000);
     CHECK(snapshot.capture.low_latency_shared);
+
+    parser.clear();
+    CHECK(parser.snapshot().peer_presence.empty());
+    CHECK(parser.append("peer_level\t0\t-30\t1\t1\n"));
+    CHECK(parser.snapshot().peers.size() == 1);
+    CHECK(parser.snapshot().peer_presence.empty());
 }
 
 void test_gdi_cache_handle_count_is_stable() {
@@ -701,6 +859,15 @@ void test_about_localization() {
     CHECK(std::wstring(localized_text(
               TextId::audio_latency_diagnostics,
               LanguageSetting::russian)) == L"Диагностика задержек звука");
+    CHECK(std::wstring(localized_text(
+              TextId::presence_online,
+              LanguageSetting::english)) == L"Online");
+    CHECK(std::wstring(localized_text(
+              TextId::presence_offline,
+              LanguageSetting::russian)) == L"Офлайн");
+    CHECK(std::wstring(localized_text(
+              TextId::presence_unknown,
+              LanguageSetting::russian)) == L"Статус неизвестен");
 }
 
 } // namespace
@@ -708,6 +875,8 @@ void test_about_localization() {
 int main() {
     try {
         test_udp_packet_validation();
+        test_udp_presence_packet_validation();
+        test_presence_tracker_lifecycle();
         test_pcm_conversion_and_resampling();
         test_wasapi_pcm_payload_and_render_conversion();
         test_jitter_in_order_and_reordering();

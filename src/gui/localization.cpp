@@ -235,6 +235,14 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Включить в PTT для всех" : L"Include in PTT for All";
     case TextId::exclude_from_global_ptt:
         return ru ? L"Исключить из PTT для всех" : L"Exclude from PTT for All";
+    case TextId::presence_online:
+        return ru ? L"Онлайн" : L"Online";
+    case TextId::presence_offline:
+        return ru ? L"Офлайн" : L"Offline";
+    case TextId::presence_unknown:
+        return ru ? L"Статус неизвестен" : L"Status unknown";
+    case TextId::round_trip_time:
+        return L"RTT";
     case TextId::help:
         return ru ? L"Помощь" : L"Help";
     case TextId::about:

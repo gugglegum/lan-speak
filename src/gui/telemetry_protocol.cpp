@@ -127,6 +127,24 @@ bool TelemetryParser::parse_line(const std::string& line) {
         snapshot_.local = MeterTelemetry{true, level, active != 0, active != 0};
         return true;
     }
+    if (kind == "peer_presence") {
+        std::size_t index = 0;
+        int state = 0;
+        double rtt_ms = -1.0;
+        if (!(stream >> index >> state >> rtt_ms) ||
+            state < static_cast<int>(PeerPresenceState::unknown) ||
+            state > static_cast<int>(PeerPresenceState::offline)) {
+            return false;
+        }
+        if (snapshot_.peer_presence.size() <= index) {
+            snapshot_.peer_presence.resize(index + 1);
+        }
+        snapshot_.peer_presence[index] = PresenceTelemetry{
+            true,
+            static_cast<PeerPresenceState>(state),
+            rtt_ms};
+        return true;
+    }
     if (kind != "peer_level") {
         return false;
     }
