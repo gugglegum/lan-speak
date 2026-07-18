@@ -48,6 +48,18 @@ bool is_modifier_key(UINT vk) {
     }
 }
 
+bool is_supported_mouse_hotkey(UINT vk) {
+    switch (vk) {
+    case VK_RBUTTON:
+    case VK_MBUTTON:
+    case VK_XBUTTON1:
+    case VK_XBUTTON2:
+        return true;
+    default:
+        return false;
+    }
+}
+
 std::uint32_t modifier_mask_for_vk(UINT vk) {
     switch (vk) {
     case VK_SHIFT:
@@ -83,6 +95,18 @@ std::uint32_t current_hotkey_modifiers() {
 }
 
 std::wstring hotkey_key_name(UINT vk) {
+    switch (vk) {
+    case VK_RBUTTON:
+        return L"Mouse 2";
+    case VK_MBUTTON:
+        return L"Mouse 3";
+    case VK_XBUTTON1:
+        return L"Mouse 4";
+    case VK_XBUTTON2:
+        return L"Mouse 5";
+    default:
+        break;
+    }
     if ((vk >= L'A' && vk <= L'Z') || (vk >= L'0' && vk <= L'9')) {
         return std::wstring(1, static_cast<wchar_t>(vk));
     }

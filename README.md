@@ -15,7 +15,7 @@ LanSpeak uses shared-mode WASAPI and raw PCM over UDP. There is no central serve
 - Raw mono PCM16 over UDP with a small jitter buffer and no codec delay.
 - Full-mesh rooms for two or more participants without a server.
 - Configurable local UDP port and IPv4 interface binding.
-- Global and per-contact push-to-talk, including global hotkeys.
+- Global and per-contact push-to-talk, including system-wide keyboard and mouse hotkeys.
 - Per-contact gain, mute, and inclusion in or exclusion from group PTT.
 - Per-contact receiver-side self-ducking with configurable attack, hold, and release.
 - Contact and microphone VU meters with a `-60 dBFS` floor and smooth release.
@@ -32,7 +32,7 @@ LanSpeak uses shared-mode WASAPI and raw PCM over UDP. There is no central serve
 4. Select the input and output endpoints from the **Settings** menu.
 5. Add every other participant as a contact using their LAN IP address and UDP port. The default port is `49740`.
 6. Every participant must add every other participant to form the full mesh.
-7. Use the group talk button or configure global/per-contact PTT hotkeys under **Settings > Global Hotkeys**.
+7. Use the group talk button or configure global/per-contact keyboard or mouse PTT hotkeys under **Settings > Global Hotkeys**.
 
 The application starts in listening mode with outgoing microphone transmission disabled. Settings and contacts are stored in `settings.txt` next to the executables.
 The default network binding accepts traffic on all interfaces (`0.0.0.0`). It can be restricted under **Settings > Network settings** when a computer has multiple network adapters.

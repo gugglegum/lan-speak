@@ -20,6 +20,7 @@ inline constexpr std::uint32_t kHotkeyAlt = 1u << 2u;
 inline constexpr std::uint32_t kHotkeyWin = 1u << 3u;
 
 bool is_modifier_key(UINT vk);
+bool is_supported_mouse_hotkey(UINT vk);
 std::uint32_t modifier_mask_for_vk(UINT vk);
 std::uint32_t current_hotkey_modifiers();
 std::wstring hotkey_key_name(UINT vk);

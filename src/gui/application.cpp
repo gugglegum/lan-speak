@@ -50,6 +50,7 @@ using lanspeak::gui::TextId;
 using lanspeak::gui::draw_group_icon;
 using lanspeak::gui::current_hotkey_modifiers;
 using lanspeak::gui::is_modifier_key;
+using lanspeak::gui::is_supported_mouse_hotkey;
 using lanspeak::gui::kHotkeyAlt;
 using lanspeak::gui::kHotkeyCtrl;
 using lanspeak::gui::kHotkeyShift;
@@ -193,6 +194,7 @@ struct ApplicationState {
     lanspeak::gui::TrayIcon tray_icon;
     UINT taskbar_created_message = 0;
     HHOOK keyboard_hook = nullptr;
+    HHOOK mouse_hook = nullptr;
     Hotkey ptt_all_hotkey;
     bool global_hotkey_ptt_down = false;
     Hotkey contact_hotkey_pressed;
@@ -264,12 +266,35 @@ std::vector<size_t> matching_contact_hotkey_indices(const Hotkey& hotkey) {
     return indices;
 }
 
-bool any_global_hotkey_configured() {
-    if (g_app.ptt_all_hotkey.valid()) {
+std::vector<size_t> matching_contact_mouse_hotkey_indices(UINT vk) {
+    std::vector<size_t> indices;
+    for (size_t index = 0; index < g_app.contacts.size(); ++index) {
+        const Hotkey& hotkey = g_app.contacts[index].ptt_hotkey;
+        if (hotkey.valid() && is_supported_mouse_hotkey(hotkey.vk) && hotkey.vk == vk) {
+            indices.push_back(index);
+        }
+    }
+    return indices;
+}
+
+bool any_keyboard_hotkey_configured() {
+    if (g_app.ptt_all_hotkey.valid() && !is_supported_mouse_hotkey(g_app.ptt_all_hotkey.vk)) {
         return true;
     }
     for (const Contact& contact : g_app.contacts) {
-        if (contact.ptt_hotkey.valid()) {
+        if (contact.ptt_hotkey.valid() && !is_supported_mouse_hotkey(contact.ptt_hotkey.vk)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool any_mouse_hotkey_configured() {
+    if (g_app.ptt_all_hotkey.valid() && is_supported_mouse_hotkey(g_app.ptt_all_hotkey.vk)) {
+        return true;
+    }
+    for (const Contact& contact : g_app.contacts) {
+        if (contact.ptt_hotkey.valid() && is_supported_mouse_hotkey(contact.ptt_hotkey.vk)) {
             return true;
         }
     }
@@ -309,7 +334,7 @@ void deactivate_contact_hotkey_ptt() {
 }
 
 LRESULT CALLBACK low_level_keyboard_proc(int code, WPARAM wparam, LPARAM lparam) {
-    if (code == HC_ACTION && any_global_hotkey_configured() && g_app.main_window) {
+    if (code == HC_ACTION && any_keyboard_hotkey_configured() && g_app.main_window) {
         const auto* keyboard = reinterpret_cast<KBDLLHOOKSTRUCT*>(lparam);
         const UINT vk = keyboard ? keyboard->vkCode : 0;
         const bool key_down = wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN;
@@ -368,23 +393,111 @@ LRESULT CALLBACK low_level_keyboard_proc(int code, WPARAM wparam, LPARAM lparam)
     return CallNextHookEx(g_app.keyboard_hook, code, wparam, lparam);
 }
 
+UINT mouse_hotkey_vk(WPARAM message, const MSLLHOOKSTRUCT* mouse) {
+    switch (message) {
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+        return VK_RBUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        return VK_MBUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+        if (mouse) {
+            const WORD button = HIWORD(mouse->mouseData);
+            if (button == XBUTTON1) return VK_XBUTTON1;
+            if (button == XBUTTON2) return VK_XBUTTON2;
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+bool is_mouse_hotkey_down_message(WPARAM message) {
+    return message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN;
+}
+
+bool is_mouse_hotkey_up_message(WPARAM message) {
+    return message == WM_RBUTTONUP || message == WM_MBUTTONUP || message == WM_XBUTTONUP;
+}
+
+LRESULT CALLBACK low_level_mouse_proc(int code, WPARAM wparam, LPARAM lparam) {
+    if (code == HC_ACTION && any_mouse_hotkey_configured() && g_app.main_window) {
+        const auto* mouse = reinterpret_cast<MSLLHOOKSTRUCT*>(lparam);
+        const UINT vk = mouse_hotkey_vk(wparam, mouse);
+        const bool button_down = is_mouse_hotkey_down_message(wparam);
+        const bool button_up = is_mouse_hotkey_up_message(wparam);
+
+        if (button_down && g_app.ptt_all_hotkey.valid() &&
+            is_supported_mouse_hotkey(g_app.ptt_all_hotkey.vk) && vk == g_app.ptt_all_hotkey.vk) {
+            if (!g_app.global_hotkey_ptt_down) {
+                g_app.global_hotkey_ptt_down = true;
+                post_global_hotkey_ptt(true);
+            }
+            return 1;
+        }
+
+        if (button_up && g_app.global_hotkey_ptt_down && vk == g_app.ptt_all_hotkey.vk) {
+            deactivate_global_hotkey_ptt();
+            return 1;
+        }
+
+        if (button_down && vk != 0) {
+            if (g_app.contact_hotkey_down && vk == g_app.contact_hotkey_pressed.vk) {
+                return 1;
+            }
+            if (!g_app.contact_hotkey_down && !(g_app.push_to_talk_down && !g_app.input_muted)) {
+                std::vector<size_t> indices = matching_contact_mouse_hotkey_indices(vk);
+                if (!indices.empty()) {
+                    g_app.contact_hotkey_pressed = Hotkey{0, vk};
+                    g_app.contact_hotkey_down = true;
+                    g_app.contact_hotkey_indices = std::move(indices);
+                    for (size_t index : g_app.contact_hotkey_indices) {
+                        post_contact_hotkey_ptt(index, true);
+                    }
+                    return 1;
+                }
+            }
+        }
+
+        if (button_up && g_app.contact_hotkey_down && vk == g_app.contact_hotkey_pressed.vk &&
+            is_supported_mouse_hotkey(g_app.contact_hotkey_pressed.vk)) {
+            deactivate_contact_hotkey_ptt();
+            return 1;
+        }
+    }
+    return CallNextHookEx(g_app.mouse_hook, code, wparam, lparam);
+}
+
 void update_global_hotkey_hook() {
-    if (!any_global_hotkey_configured()) {
+    const bool needs_keyboard_hook = any_keyboard_hotkey_configured();
+    const bool needs_mouse_hook = any_mouse_hotkey_configured();
+    if (!needs_keyboard_hook && !needs_mouse_hook) {
         deactivate_global_hotkey_ptt();
         deactivate_contact_hotkey_ptt();
-        if (g_app.keyboard_hook) {
-            UnhookWindowsHookEx(g_app.keyboard_hook);
-            g_app.keyboard_hook = nullptr;
-        }
-        return;
     }
 
-    if (!g_app.keyboard_hook) {
+    if (needs_keyboard_hook && !g_app.keyboard_hook) {
         g_app.keyboard_hook = SetWindowsHookExW(
             WH_KEYBOARD_LL,
             low_level_keyboard_proc,
             GetModuleHandleW(nullptr),
             0);
+    } else if (!needs_keyboard_hook && g_app.keyboard_hook) {
+        UnhookWindowsHookEx(g_app.keyboard_hook);
+        g_app.keyboard_hook = nullptr;
+    }
+
+    if (needs_mouse_hook && !g_app.mouse_hook) {
+        g_app.mouse_hook = SetWindowsHookExW(
+            WH_MOUSE_LL,
+            low_level_mouse_proc,
+            GetModuleHandleW(nullptr),
+            0);
+    } else if (!needs_mouse_hook && g_app.mouse_hook) {
+        UnhookWindowsHookEx(g_app.mouse_hook);
+        g_app.mouse_hook = nullptr;
     }
 }
 
@@ -394,6 +507,10 @@ void remove_global_hotkey_hook() {
     if (g_app.keyboard_hook) {
         UnhookWindowsHookEx(g_app.keyboard_hook);
         g_app.keyboard_hook = nullptr;
+    }
+    if (g_app.mouse_hook) {
+        UnhookWindowsHookEx(g_app.mouse_hook);
+        g_app.mouse_hook = nullptr;
     }
 }
 
@@ -2438,6 +2555,7 @@ constexpr int kHotkeyContactListTop = 82;
 constexpr int kHotkeyContactListWidth = 528;
 
 struct HotkeyDialogState {
+    HWND window = nullptr;
     HWND owner = nullptr;
     HWND display = nullptr;
     HWND record_button = nullptr;
@@ -2453,6 +2571,7 @@ struct HotkeyDialogState {
     HFONT heading_font = nullptr;
     bool accepted = false;
     int recording_index = kHotkeyRecordingNone;
+    UINT recording_mouse_vk = 0;
     int contact_scroll_offset = 0;
     bool owner_restored = false;
 };
@@ -2592,6 +2711,14 @@ void update_hotkey_dialog_displays(HotkeyDialogState& state) {
 void set_hotkey_dialog_recording(HotkeyDialogState& state, int index) {
     const int previous = state.recording_index;
     state.recording_index = index;
+    state.recording_mouse_vk = 0;
+    if (index == kHotkeyRecordingNone) {
+        if (state.window && GetCapture() == state.window) {
+            ReleaseCapture();
+        }
+    } else if (state.window) {
+        SetCapture(state.window);
+    }
     update_hotkey_dialog_display(state, previous);
     update_hotkey_dialog_display(state, index);
 }
@@ -2820,6 +2947,7 @@ void restore_hotkey_dialog_owner(HotkeyDialogState& state) {
 
 void close_hotkey_dialog(HWND window, HotkeyDialogState* state) {
     if (state) {
+        set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
         restore_hotkey_dialog_owner(*state);
     }
     DestroyWindow(window);
@@ -2840,6 +2968,7 @@ LRESULT CALLBACK hotkey_dialog_proc(HWND window, UINT message, WPARAM wparam, LP
     case WM_CREATE:
         state = reinterpret_cast<HotkeyDialogState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (state) {
+            state->window = window;
             create_hotkey_dialog_controls(window, *state);
             SetFocus(state->record_button);
             return 0;
@@ -2869,6 +2998,57 @@ LRESULT CALLBACK hotkey_dialog_proc(HWND window, UINT message, WPARAM wparam, LP
             return 0;
         }
         break;
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
+        if (state && state->recording_index != kHotkeyRecordingNone) {
+            UINT vk = 0;
+            if (message == WM_RBUTTONDOWN) vk = VK_RBUTTON;
+            if (message == WM_MBUTTONDOWN) vk = VK_MBUTTON;
+            if (message == WM_XBUTTONDOWN) {
+                const WORD button = HIWORD(wparam);
+                if (button == XBUTTON1) vk = VK_XBUTTON1;
+                if (button == XBUTTON2) vk = VK_XBUTTON2;
+            }
+            if (is_supported_mouse_hotkey(vk)) {
+                Hotkey& hotkey = hotkey_dialog_hotkey(*state, state->recording_index);
+                hotkey.modifiers = 0;
+                hotkey.vk = vk;
+                state->recording_mouse_vk = vk;
+                return message == WM_XBUTTONDOWN ? TRUE : 0;
+            }
+        }
+        break;
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
+        if (state && state->recording_index != kHotkeyRecordingNone && state->recording_mouse_vk != 0) {
+            UINT vk = 0;
+            if (message == WM_RBUTTONUP) vk = VK_RBUTTON;
+            if (message == WM_MBUTTONUP) vk = VK_MBUTTON;
+            if (message == WM_XBUTTONUP) {
+                const WORD button = HIWORD(wparam);
+                if (button == XBUTTON1) vk = VK_XBUTTON1;
+                if (button == XBUTTON2) vk = VK_XBUTTON2;
+            }
+            if (vk == state->recording_mouse_vk) {
+                set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
+                return message == WM_XBUTTONUP ? TRUE : 0;
+            }
+        }
+        break;
+    case WM_LBUTTONDOWN:
+        if (state && state->recording_index != kHotkeyRecordingNone) {
+            set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
+            return 0;
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        if (state && state->recording_index != kHotkeyRecordingNone &&
+            reinterpret_cast<HWND>(lparam) != state->window) {
+            set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
+        }
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case IDC_HOTKEY_RECORD:
@@ -2977,6 +3157,7 @@ void show_global_hotkeys_dialog(HWND owner) {
         return;
     }
 
+    remove_global_hotkey_hook();
     center_window_on_owner(dialog, owner);
     EnableWindow(owner, FALSE);
     ShowWindow(dialog, SW_SHOW);
@@ -3002,9 +3183,9 @@ void show_global_hotkeys_dialog(HWND owner) {
         for (size_t index = 0; index < count; ++index) {
             g_app.contacts[index].ptt_hotkey = state.contact_hotkeys[index];
         }
-        update_global_hotkey_hook();
         save_settings();
     }
+    update_global_hotkey_hook();
 }
 
 std::wstring build_command_line(

@@ -512,7 +512,7 @@ void test_settings_round_trip_and_legacy_contact() {
     source.window_width = 777;
     source.window_height = 555;
     source.language = LanguageSetting::russian;
-    source.ptt_all_hotkey = Hotkey{4, 'S'};
+    source.ptt_all_hotkey = Hotkey{0, VK_XBUTTON1};
     source.debug_console_visible = true;
     source.local_port = 51234;
     source.network_adapter_id = L"{stable-adapter-id}";
@@ -674,6 +674,13 @@ void test_hotkey_formatting_and_identity() {
     CHECK(!same_hotkey(hotkey, Hotkey{kHotkeyCtrl, 'S'}));
     CHECK(is_modifier_key(VK_LSHIFT));
     CHECK(modifier_mask_for_vk(VK_RCONTROL) == kHotkeyCtrl);
+    CHECK(is_supported_mouse_hotkey(VK_RBUTTON));
+    CHECK(is_supported_mouse_hotkey(VK_MBUTTON));
+    CHECK(is_supported_mouse_hotkey(VK_XBUTTON1));
+    CHECK(is_supported_mouse_hotkey(VK_XBUTTON2));
+    CHECK(!is_supported_mouse_hotkey(VK_LBUTTON));
+    CHECK(format_hotkey(Hotkey{0, VK_RBUTTON}, L"not set") == L"Mouse 2");
+    CHECK(format_hotkey(Hotkey{0, VK_XBUTTON2}, L"not set") == L"Mouse 5");
 }
 
 void test_about_localization() {
