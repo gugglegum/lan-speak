@@ -172,7 +172,6 @@ struct ApplicationState {
     int mouse_contact_ptt_index = -1;
     int contact_tooltip_index = -1;
     bool contact_tooltip_presence = false;
-    bool contact_tooltip_visible = false;
     std::wstring contact_tooltip_text;
 
     lanspeak::gui::CoreProcessController core_process;
@@ -1271,20 +1270,29 @@ ContactHitAction contact_hit_test(HWND panel, POINT point, int& index) {
 
 TOOLINFOW contact_tooltip_info(HWND panel) {
     TOOLINFOW info{};
-    info.cbSize = sizeof(info);
-    info.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+    info.cbSize = TTTOOLINFOW_V1_SIZE;
+    info.uFlags = TTF_SUBCLASS;
     info.hwnd = panel;
     info.uId = 1;
+    GetClientRect(panel, &info.rect);
     return info;
 }
 
 void hide_contact_tooltip() {
-    if (g_app.contact_tooltip && g_app.contact_tooltip_visible && g_app.contact_list) {
-        TOOLINFOW info = contact_tooltip_info(g_app.contact_list);
-        SendMessageW(g_app.contact_tooltip, TTM_TRACKACTIVATE, FALSE, reinterpret_cast<LPARAM>(&info));
+    if (g_app.contact_tooltip) {
+        SendMessageW(g_app.contact_tooltip, TTM_POP, 0, 0);
     }
-    g_app.contact_tooltip_visible = false;
 }
+
+void update_contact_tooltip_rect(HWND panel) {
+    if (!g_app.contact_tooltip || !panel) {
+        return;
+    }
+    TOOLINFOW info = contact_tooltip_info(panel);
+    SendMessageW(g_app.contact_tooltip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&info));
+}
+
+void update_contact_tooltip_text(HWND panel);
 
 void update_contact_tooltip_target(HWND panel, POINT point) {
     int index = -1;
@@ -1299,35 +1307,18 @@ void update_contact_tooltip_target(HWND panel, POINT point) {
     hide_contact_tooltip();
     g_app.contact_tooltip_index = target_index;
     g_app.contact_tooltip_presence = presence;
-
-    TRACKMOUSEEVENT tracking{};
-    tracking.cbSize = sizeof(tracking);
-    tracking.dwFlags = TME_LEAVE | (target_index >= 0 ? TME_HOVER : 0);
-    tracking.hwndTrack = panel;
-    tracking.dwHoverTime = 500;
-    TrackMouseEvent(&tracking);
+    update_contact_tooltip_text(panel);
 }
 
-void show_contact_tooltip(HWND panel) {
-    if (!g_app.contact_tooltip || g_app.contact_tooltip_index < 0 ||
-        static_cast<size_t>(g_app.contact_tooltip_index) >= g_app.contacts.size()) {
+void update_contact_tooltip_text(HWND panel) {
+    if (!g_app.contact_tooltip) {
         return;
     }
 
-    POINT point{};
-    GetCursorPos(&point);
-    POINT client_point = point;
-    ScreenToClient(panel, &client_point);
-    int index = -1;
-    const ContactHitAction expected_action = g_app.contact_tooltip_presence
-        ? ContactHitAction::select
-        : ContactHitAction::global_ptt;
-    if (contact_hit_test(panel, client_point, index) != expected_action ||
-        index != g_app.contact_tooltip_index) {
-        return;
-    }
-
-    if (g_app.contact_tooltip_presence) {
+    const int index = g_app.contact_tooltip_index;
+    if (index < 0 || static_cast<size_t>(index) >= g_app.contacts.size()) {
+        g_app.contact_tooltip_text.clear();
+    } else if (g_app.contact_tooltip_presence) {
         const size_t contact_index = static_cast<size_t>(index);
         const auto* presence = contact_index < g_app.contact_presence.size()
             ? &g_app.contact_presence[contact_index]
@@ -1355,12 +1346,10 @@ void show_contact_tooltip(HWND panel) {
         g_app.contact_tooltip_text = text(
             enabled ? TextId::exclude_from_global_ptt : TextId::include_in_global_ptt);
     }
+
     TOOLINFOW info = contact_tooltip_info(panel);
     info.lpszText = g_app.contact_tooltip_text.data();
     SendMessageW(g_app.contact_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
-    SendMessageW(g_app.contact_tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(point.x + 12, point.y + 20));
-    SendMessageW(g_app.contact_tooltip, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&info));
-    g_app.contact_tooltip_visible = true;
 }
 
 void create_contact_tooltip(HWND panel) {
@@ -1377,7 +1366,7 @@ void create_contact_tooltip(HWND panel) {
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        panel,
+        GetAncestor(panel, GA_ROOT),
         nullptr,
         g_app.instance,
         nullptr);
@@ -1397,6 +1386,7 @@ void create_contact_tooltip(HWND panel) {
     info.lpszText = const_cast<LPWSTR>(L"");
     SendMessageW(g_app.contact_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
     SendMessageW(g_app.contact_tooltip, TTM_SETMAXTIPWIDTH, 0, 320);
+    SendMessageW(g_app.contact_tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 500);
 }
 
 void refresh_contact_list(int select_index = -1) {
@@ -2331,6 +2321,7 @@ LRESULT CALLBACK contact_panel_proc(HWND window, UINT message, WPARAM wparam, LP
         return 1;
     case WM_SIZE:
         hide_contact_tooltip();
+        update_contact_tooltip_rect(window);
         update_contact_scrollbar(window);
         InvalidateRect(window, nullptr, TRUE);
         return 0;
@@ -2451,13 +2442,6 @@ LRESULT CALLBACK contact_panel_proc(HWND window, UINT message, WPARAM wparam, LP
             update_contact_tooltip_target(window, point);
         }
         break;
-    case WM_MOUSEHOVER:
-        show_contact_tooltip(window);
-        return 0;
-    case WM_MOUSELEAVE:
-        hide_contact_tooltip();
-        g_app.contact_tooltip_index = -1;
-        return 0;
     case WM_LBUTTONUP:
         if (g_app.mouse_contact_ptt_index >= 0) {
             set_contact_push_to_talk_active(static_cast<size_t>(g_app.mouse_contact_ptt_index), false);
@@ -3743,6 +3727,7 @@ void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) 
     const std::size_t presence_count = std::min(
         g_app.contacts.size(),
         snapshot.peer_presence.size());
+    bool hovered_presence_changed = false;
     for (std::size_t index = 0; index < presence_count; ++index) {
         const lanspeak::gui::PresenceTelemetry& incoming = snapshot.peer_presence[index];
         if (!incoming.valid || index >= g_app.contact_presence.size()) continue;
@@ -3751,7 +3736,13 @@ void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) 
             std::abs(current.rtt_ms - incoming.rtt_ms) >= 0.5) {
             current = incoming;
             invalidate_contact_row(index);
+            hovered_presence_changed = hovered_presence_changed ||
+                (g_app.contact_tooltip_presence &&
+                 g_app.contact_tooltip_index == static_cast<int>(index));
         }
+    }
+    if (hovered_presence_changed && g_app.contact_list) {
+        update_contact_tooltip_text(g_app.contact_list);
     }
     update_osd_overlay();
 }
