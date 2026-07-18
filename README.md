@@ -73,6 +73,14 @@ The version can also be injected without changing tracked files:
 cmake -S . -B build -DLANSPEAK_VERSION_OVERRIDE=1.1.0-alpha.1
 ```
 
+To build, test, and create a local Windows archive without publishing a tag or release:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build_package.ps1 -Version 1.1.0-alpha.1
+```
+
+The archive is written to `dist/` and contains both executables, the license, both README files, and both changelog files. It never includes `settings.txt`.
+
 To publish an alpha snapshot, tag the tested commit and build that exact commit:
 
 ```powershell

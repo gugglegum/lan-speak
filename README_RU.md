@@ -73,6 +73,14 @@ MSVC-сборки используют статический runtime (`/MT` д�
 cmake -S . -B build -DLANSPEAK_VERSION_OVERRIDE=1.1.0-alpha.1
 ```
 
+Чтобы собрать, протестировать и создать локальный Windows-архив без публикации тега или релиза:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/build_package.ps1 -Version 1.1.0-alpha.1
+```
+
+Архив сохраняется в `dist/` и содержит оба исполняемых файла, лицензию, оба README и оба файла истории изменений. `settings.txt` в архив не добавляется.
+
 Для выпуска alpha-сборки нужно отметить проверенный коммит тегом и собрать именно этот коммит:
 
 ```powershell
