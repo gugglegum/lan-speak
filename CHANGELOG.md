@@ -27,6 +27,7 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 ### Fixed
 
 - Editing or cancelling a contact no longer clears its latched `Talk continuously` state. Latched group and per-contact transmission is restored after a Core restart caused by settings changes.
+- The lock indicator on a contact PTT button no longer squeezes the `PTT` label against the button border.
 
 ## [1.0.0] - 2026-07-13
 

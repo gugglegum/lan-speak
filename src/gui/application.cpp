@@ -115,7 +115,8 @@ constexpr int kLogTrimTargetChars = 96 * 1024;
 constexpr int kLocalMeterHeight = 28;
 constexpr int kLocalMeterGap = 8;
 constexpr int kContactMuteButtonSize = 30;
-constexpr int kContactPttButtonSize = 30;
+constexpr int kContactPttButtonWidth = 36;
+constexpr int kContactPttButtonHeight = 30;
 constexpr int kContactGlobalPttButtonSize = 30;
 constexpr int kContactGainButtonSize = 22;
 constexpr int kContactGainSliderWidth = 96;
@@ -1032,10 +1033,10 @@ RECT contact_ptt_button_rect_from_card(const RECT& card_rect) {
     const RECT mute = contact_mute_button_rect_from_card(card_rect);
     const int center_y = card_rect.top + (card_rect.bottom - card_rect.top) / 2;
     return RECT{
-        mute.left - kContactControlGap - kContactPttButtonSize,
-        center_y - kContactPttButtonSize / 2,
+        mute.left - kContactControlGap - kContactPttButtonWidth,
+        center_y - kContactPttButtonHeight / 2,
         mute.left - kContactControlGap,
-        center_y + (kContactPttButtonSize + 1) / 2};
+        center_y + (kContactPttButtonHeight + 1) / 2};
 }
 
 RECT contact_global_ptt_button_rect_from_card(const RECT& card_rect) {
@@ -1708,9 +1709,6 @@ void draw_contact_ptt_button(
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text_color);
     RECT text_rect = button_rect;
-    if (latched) {
-        text_rect.right -= 7;
-    }
     DrawTextW(dc, L"PTT", 3, &text_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
 
     if (latched) {
@@ -1719,7 +1717,7 @@ void draw_contact_ptt_button(
         HBRUSH lock_brush = g_app.gdi_objects.brush(lock_color);
         HGDIOBJ old_lock_pen = SelectObject(dc, lock_pen);
         HGDIOBJ old_lock_brush = SelectObject(dc, lock_brush);
-        const int left = button_rect.right - 8;
+        const int left = button_rect.right - 7;
         const int top = button_rect.top + 2;
         MoveToEx(dc, left + 1, top + 5, nullptr);
         LineTo(dc, left + 1, top + 3);
@@ -1727,7 +1725,7 @@ void draw_contact_ptt_button(
         LineTo(dc, left + 4, top + 1);
         LineTo(dc, left + 5, top + 3);
         LineTo(dc, left + 5, top + 5);
-        Rectangle(dc, left, top + 5, left + 7, top + 10);
+        Rectangle(dc, left, top + 5, left + 6, top + 10);
         SelectObject(dc, old_lock_brush);
         SelectObject(dc, old_lock_pen);
     }
