@@ -30,6 +30,12 @@ struct PresenceTelemetry {
     double rtt_ms = -1.0;
 };
 
+struct LatencyTelemetry {
+    bool valid = false;
+    double incoming_ms = -1.0;
+    double outgoing_ms = -1.0;
+};
+
 struct AudioEndpointTelemetry {
     bool valid = false;
     std::string name_utf8;
@@ -43,12 +49,30 @@ struct AudioEndpointTelemetry {
     double current_padding_ms = -1.0;
 };
 
+struct DiscoveryPeerTelemetry {
+    std::uint64_t request_id = 0;
+    std::uint64_t session_id = 0;
+    std::string ip_utf8;
+    std::uint16_t voice_port = 0;
+    bool already_contact = false;
+    std::string computer_name_utf8;
+};
+
+struct DiscoveryErrorTelemetry {
+    bool valid = false;
+    std::uint64_t request_id = 0;
+    int error_code = 0;
+};
+
 struct TelemetrySnapshot {
     MeterTelemetry local;
     std::vector<MeterTelemetry> peers;
     std::vector<PresenceTelemetry> peer_presence;
+    std::vector<LatencyTelemetry> peer_latency;
     AudioEndpointTelemetry capture;
     AudioEndpointTelemetry render;
+    std::vector<DiscoveryPeerTelemetry> discovery_peers;
+    DiscoveryErrorTelemetry discovery_error;
     std::uint64_t revision = 0;
 };
 

@@ -24,14 +24,19 @@
 #include "core/audio_math.h"
 #include "core/diagnostics.h"
 #include "core/jitter_buffer.h"
+#include "core/latency_model.h"
+#include "core/network_discovery.h"
 #include "core/options.h"
 #include "core/pcm_audio.h"
+#include "core/peer_info_tracker.h"
 #include "core/peer_router.h"
 #include "core/presence_tracker.h"
 #include "core/room_mixer.h"
 #include "core/room_session.h"
 #include "core/telemetry_snapshot.h"
 #include "core/udp_audio_packet.h"
+#include "core/udp_discovery_packet.h"
+#include "core/udp_peer_info_packet.h"
 #include "core/udp_presence_packet.h"
 #include "core/wasapi_audio.h"
 #include "core/wasapi_devices.h"
@@ -66,9 +71,15 @@ namespace {
 
 using lanspeak::core::JitterBuffer;
 using lanspeak::core::JitterStats;
+using lanspeak::core::CaptureLatencyEstimator;
+using lanspeak::core::DirectionalLatencyEstimate;
+using lanspeak::core::DiscoveryReplyCache;
 using lanspeak::core::EndpointCandidate;
 using lanspeak::core::ProbeOptions;
 using lanspeak::core::PeerRouter;
+using lanspeak::core::PeerInfoAction;
+using lanspeak::core::PeerInfoTracker;
+using lanspeak::core::PeerLatencyProfile;
 using lanspeak::core::PeerPresenceState;
 using lanspeak::core::PresenceAction;
 using lanspeak::core::PresenceTracker;
@@ -78,6 +89,9 @@ using lanspeak::core::RoomPeerOptions;
 using lanspeak::core::SampleKind;
 using lanspeak::core::TelemetrySnapshot;
 using lanspeak::core::UdpAudioPacketHeader;
+using lanspeak::core::UdpDiscoveryPacket;
+using lanspeak::core::UdpDiscoveryType;
+using lanspeak::core::UdpPeerInfoPacket;
 using lanspeak::core::UdpPresencePacket;
 using lanspeak::core::UdpPresenceType;
 using lanspeak::core::audio_level_dbfs;
@@ -642,6 +656,25 @@ bool wait_udp_readable(SOCKET socket, int timeout_ms) {
         return false;
     }
     return rc > 0 && FD_ISSET(socket, &read_set);
+}
+
+SOCKET wait_udp_readable_pair(SOCKET first, SOCKET second, int timeout_ms) {
+    fd_set read_set;
+    FD_ZERO(&read_set);
+    if (first != INVALID_SOCKET) FD_SET(first, &read_set);
+    if (second != INVALID_SOCKET && second != first) FD_SET(second, &read_set);
+
+    timeval timeout{};
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+    const int rc = select(0, &read_set, nullptr, nullptr, &timeout);
+    if (rc == SOCKET_ERROR) {
+        std::wcout << L"select failed: " << winsock_error_text() << L"\n";
+        return INVALID_SOCKET;
+    }
+    if (second != INVALID_SOCKET && second != first && FD_ISSET(second, &read_set)) return second;
+    if (first != INVALID_SOCKET && FD_ISSET(first, &read_set)) return first;
+    return INVALID_SOCKET;
 }
 
 FormatCandidate copy_format_candidate(std::wstring name, const WAVEFORMATEX& format) {
@@ -2297,6 +2330,27 @@ struct RoomPeerRuntime {
     double current_duck_gain = 1.0;
 };
 
+struct SharedCaptureLatencyProfile {
+    std::atomic<std::uint32_t> capture_to_send_us{0};
+    std::atomic<std::uint32_t> packet_duration_us{0};
+    std::atomic_bool ready{false};
+
+    void publish(std::uint32_t capture_us, std::uint32_t packet_us) {
+        if (capture_us == 0) return;
+        if (ready.load(std::memory_order_acquire)) return;
+        capture_to_send_us.store(capture_us, std::memory_order_relaxed);
+        packet_duration_us.store(packet_us, std::memory_order_relaxed);
+        ready.store(true, std::memory_order_release);
+    }
+
+    bool read(std::uint32_t& capture_us, std::uint32_t& packet_us) const {
+        if (!ready.load(std::memory_order_acquire)) return false;
+        capture_us = capture_to_send_us.load(std::memory_order_relaxed);
+        packet_us = packet_duration_us.load(std::memory_order_relaxed);
+        return capture_us != 0;
+    }
+};
+
 struct TelemetryWriter {
     HANDLE handle = nullptr;
 
@@ -2348,7 +2402,8 @@ void read_room_control_commands(
     HANDLE control_handle,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
     std::atomic_bool& stop,
-    std::atomic_bool* input_muted) {
+    std::atomic_bool* input_muted,
+    std::atomic<std::uint64_t>* discovery_request_id) {
     if (control_handle == nullptr || control_handle == INVALID_HANDLE_VALUE) {
         return;
     }
@@ -2384,7 +2439,8 @@ void read_room_control_commands(
             controls,
             input_muted,
             &stop,
-            &std::wcout);
+            &std::wcout,
+            discovery_request_id);
     }
 }
 
@@ -2561,13 +2617,92 @@ void update_presence_telemetry(
     }
 }
 
+bool send_peer_info_action(
+    SOCKET socket,
+    const std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
+    const PeerInfoAction& action,
+    std::uint64_t& send_errors) {
+    if (action.peer_index >= peers.size()) return false;
+    const lanspeak::core::UdpPeerInfoDatagram datagram =
+        lanspeak::core::serialize_udp_peer_info_packet(action.packet);
+    const RoomPeerRuntime& peer = *peers[action.peer_index];
+    const int sent = sendto(
+        socket,
+        reinterpret_cast<const char*>(datagram.data()),
+        static_cast<int>(datagram.size()),
+        0,
+        reinterpret_cast<const sockaddr*>(&peer.target),
+        peer.target_length);
+    if (sent == static_cast<int>(datagram.size())) return true;
+    ++send_errors;
+    if (send_errors <= 5 || send_errors % 100 == 0) {
+        std::wcout << L"Peer info send failed for peer [" << action.peer_index
+                   << L"]: " << winsock_error_text() << L", count=" << send_errors << L"\n";
+    }
+    return false;
+}
+
+void synchronize_peer_info(
+    SOCKET socket,
+    const std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
+    const PresenceTracker& presence,
+    PeerInfoTracker& peer_info,
+    const SharedCaptureLatencyProfile& capture_profile,
+    std::uint32_t render_latency_us,
+    TelemetrySnapshot& telemetry_snapshot,
+    std::uint64_t now_ms,
+    std::uint64_t& send_errors) {
+    std::uint32_t capture_to_send_us = 0;
+    std::uint32_t packet_duration_us = 0;
+    const bool local_ready = capture_profile.read(capture_to_send_us, packet_duration_us);
+
+    for (std::size_t index = 0; index < peers.size(); ++index) {
+        const lanspeak::core::PeerPresenceSnapshot presence_snapshot = presence.snapshot(index);
+        peer_info.update_presence(
+            index,
+            presence_snapshot.state,
+            presence_snapshot.remote_session_id,
+            now_ms);
+        if (local_ready) {
+            peer_info.set_local_profile(
+                index,
+                PeerLatencyProfile{
+                    capture_to_send_us,
+                    render_latency_us,
+                    packet_duration_us,
+                    static_cast<std::uint32_t>(peers[index]->options.receive_buffer_ms) * 1'000u},
+                now_ms);
+        }
+    }
+
+    for (const PeerInfoAction& action : peer_info.tick(now_ms)) {
+        send_peer_info_action(socket, peers, action, send_errors);
+    }
+
+    for (std::size_t index = 0; index < peers.size(); ++index) {
+        const lanspeak::core::PeerPresenceSnapshot presence_snapshot = presence.snapshot(index);
+        const lanspeak::core::PeerInfoSnapshot remote = peer_info.snapshot(index);
+        const DirectionalLatencyEstimate estimate =
+            presence_snapshot.state == PeerPresenceState::online && remote.valid
+            ? lanspeak::core::estimate_directional_latency(
+                  peer_info.local_profile(index),
+                  &remote.remote_profile,
+                  presence_snapshot.rtt_ms)
+            : DirectionalLatencyEstimate{};
+        telemetry_snapshot.update_peer_latency(index, estimate.incoming_ms, estimate.outgoing_ms);
+    }
+}
+
 void receive_room_udp_audio(
     std::uint16_t port,
     const std::wstring& bind_address,
     std::uint32_t expected_sample_rate,
     std::vector<std::unique_ptr<RoomPeerRuntime>>& peers,
     TelemetrySnapshot& telemetry_snapshot,
+    const SharedCaptureLatencyProfile& capture_profile,
+    std::uint32_t render_latency_us,
     std::atomic_bool& presence_enabled,
+    std::atomic<std::uint64_t>& discovery_request_id,
     std::atomic_bool& stop,
     std::atomic_bool& ready,
     std::atomic_bool& failed) {
@@ -2599,6 +2734,43 @@ void receive_room_udp_audio(
         return;
     }
 
+    const BOOL allow_broadcast = TRUE;
+    if (setsockopt(
+            socket_handle.value,
+            SOL_SOCKET,
+            SO_BROADCAST,
+            reinterpret_cast<const char*>(&allow_broadcast),
+            sizeof(allow_broadcast)) == SOCKET_ERROR) {
+        std::wcout << L"room receiver SO_BROADCAST failed: " << winsock_error_text() << L"\n";
+    }
+
+    SocketHandle discovery_socket;
+    int discovery_socket_error = 0;
+    if (port != lanspeak::core::kDiscoveryPort) {
+        discovery_socket = create_udp_socket();
+        if (discovery_socket.value == INVALID_SOCKET) {
+            discovery_socket_error = WSAGetLastError();
+        } else if (setsockopt(
+                       discovery_socket.value,
+                       SOL_SOCKET,
+                       SO_BROADCAST,
+                       reinterpret_cast<const char*>(&allow_broadcast),
+                       sizeof(allow_broadcast)) == SOCKET_ERROR) {
+            discovery_socket_error = WSAGetLastError();
+            discovery_socket = SocketHandle{};
+        } else if (!bind_udp_socket(
+                       discovery_socket,
+                       lanspeak::core::kDiscoveryPort,
+                       false,
+                       bind_address)) {
+            discovery_socket_error = WSAGetLastError();
+            discovery_socket = SocketHandle{};
+        }
+    }
+    const SOCKET discovery_receive_socket = port == lanspeak::core::kDiscoveryPort
+        ? socket_handle.value
+        : discovery_socket.value;
+
     std::map<IpAddressKey, size_t> peer_by_ip;
     std::map<IpEndpointKey, size_t> peer_by_endpoint;
     for (size_t index = 0; index < peers.size(); ++index) {
@@ -2616,9 +2788,16 @@ void receive_room_udp_audio(
     std::vector<char> buffer(65536);
     std::uint64_t unknown_datagrams = 0;
     std::uint64_t presence_send_errors = 0;
+    std::uint64_t peer_info_send_errors = 0;
     const std::uint64_t session_id = presence_entropy();
+    const std::string computer_name_utf8 =
+        lanspeak::common::wide_to_utf8(lanspeak::core::computer_network_name());
+    DiscoveryReplyCache discovery_reply_cache;
+    std::uint64_t active_discovery_request_id = 0;
     PresenceTracker presence(peers.size(), session_id, presence_entropy());
+    PeerInfoTracker peer_info(peers.size(), session_id);
     bool presence_started = false;
+    std::uint64_t next_peer_info_sync_ms = 0;
     ready = true;
 
     while (!stop.load()) {
@@ -2637,16 +2816,79 @@ void receive_room_udp_audio(
                     presence_send_errors);
             }
             update_presence_telemetry(presence, telemetry_snapshot, peers.size());
+            if (before_wait_ms >= next_peer_info_sync_ms) {
+                synchronize_peer_info(
+                    socket_handle.value,
+                    peers,
+                    presence,
+                    peer_info,
+                    capture_profile,
+                    render_latency_us,
+                    telemetry_snapshot,
+                    before_wait_ms,
+                    peer_info_send_errors);
+                next_peer_info_sync_ms = before_wait_ms + 50;
+            }
+
+            const std::uint64_t requested_discovery =
+                discovery_request_id.load(std::memory_order_acquire);
+            if (requested_discovery != 0 && requested_discovery != active_discovery_request_id) {
+                active_discovery_request_id = requested_discovery;
+                telemetry_snapshot.begin_discovery(requested_discovery);
+                if (discovery_receive_socket == INVALID_SOCKET) {
+                    telemetry_snapshot.set_discovery_error(
+                        requested_discovery,
+                        discovery_socket_error != 0 ? discovery_socket_error : WSAENOTSOCK);
+                } else {
+                    UdpDiscoveryPacket query{};
+                    query.header.type = UdpDiscoveryType::query;
+                    query.header.request_id = requested_discovery;
+                    query.header.session_id = session_id;
+                    query.header.voice_port = port;
+                    const std::vector<std::byte> datagram =
+                        lanspeak::core::serialize_udp_discovery_packet(query);
+                    const auto targets = lanspeak::core::enumerate_ipv4_broadcast_targets(
+                        bind_address,
+                        lanspeak::core::kDiscoveryPort);
+                    if (targets.empty()) {
+                        telemetry_snapshot.set_discovery_error(requested_discovery, WSAEADDRNOTAVAIL);
+                    } else {
+                        int first_error = 0;
+                        bool sent_any = false;
+                        for (const sockaddr_in& target : targets) {
+                            const int sent = sendto(
+                                discovery_receive_socket,
+                                reinterpret_cast<const char*>(datagram.data()),
+                                static_cast<int>(datagram.size()),
+                                0,
+                                reinterpret_cast<const sockaddr*>(&target),
+                                sizeof(target));
+                            if (sent == static_cast<int>(datagram.size())) {
+                                sent_any = true;
+                            } else if (first_error == 0) {
+                                first_error = WSAGetLastError();
+                            }
+                        }
+                        if (!sent_any && first_error != 0) {
+                            telemetry_snapshot.set_discovery_error(requested_discovery, first_error);
+                        }
+                    }
+                }
+            }
         }
 
-        if (!wait_udp_readable(socket_handle.value, 50)) {
+        const SOCKET readable_socket = wait_udp_readable_pair(
+            socket_handle.value,
+            discovery_socket.value,
+            50);
+        if (readable_socket == INVALID_SOCKET) {
             continue;
         }
 
         sockaddr_storage from{};
         int from_length = sizeof(from);
         const int bytes = recvfrom(
-            socket_handle.value,
+            readable_socket,
             buffer.data(),
             static_cast<int>(buffer.size()),
             0,
@@ -2659,6 +2901,67 @@ void receive_room_udp_audio(
                 failed = true;
             }
             break;
+        }
+
+        UdpDiscoveryPacket discovery_packet{};
+        const bool is_discovery_packet = lanspeak::core::validate_udp_discovery_packet(
+            std::span(
+                reinterpret_cast<const std::byte*>(buffer.data()),
+                static_cast<std::size_t>(std::max(bytes, 0))),
+            discovery_packet);
+        if (is_discovery_packet) {
+            if (!presence_started || from.ss_family != AF_INET ||
+                discovery_packet.header.session_id == session_id) {
+                continue;
+            }
+            const auto& from_ipv4 = reinterpret_cast<const sockaddr_in&>(from);
+            if (discovery_packet.header.type == UdpDiscoveryType::query) {
+                const std::uint64_t now_ms = GetTickCount64();
+                if (!discovery_reply_cache.should_reply(
+                        from_ipv4.sin_addr.s_addr,
+                        discovery_packet.header.request_id,
+                        now_ms)) {
+                    continue;
+                }
+                UdpDiscoveryPacket response{};
+                response.header.type = UdpDiscoveryType::response;
+                response.header.request_id = discovery_packet.header.request_id;
+                response.header.session_id = session_id;
+                response.header.voice_port = port;
+                response.computer_name_utf8 = computer_name_utf8;
+                const std::vector<std::byte> datagram =
+                    lanspeak::core::serialize_udp_discovery_packet(response);
+                if (!datagram.empty()) {
+                    sendto(
+                        discovery_receive_socket,
+                        reinterpret_cast<const char*>(datagram.data()),
+                        static_cast<int>(datagram.size()),
+                        0,
+                        reinterpret_cast<const sockaddr*>(&from_ipv4),
+                        sizeof(from_ipv4));
+                }
+            } else if (discovery_packet.header.request_id == active_discovery_request_id) {
+                sockaddr_storage voice_endpoint = from;
+                reinterpret_cast<sockaddr_in&>(voice_endpoint).sin_port =
+                    htons(discovery_packet.header.voice_port);
+                const std::optional<IpEndpointKey> endpoint_key =
+                    binary_endpoint_key(voice_endpoint);
+                const bool already_contact = endpoint_key &&
+                    peer_by_endpoint.find(*endpoint_key) != peer_by_endpoint.end();
+                telemetry_snapshot.add_discovered_peer(
+                    lanspeak::core::DiscoveredPeerTelemetry{
+                        discovery_packet.header.request_id,
+                        discovery_packet.header.session_id,
+                        lanspeak::common::wide_to_utf8(sockaddr_ip_key(from)),
+                        discovery_packet.header.voice_port,
+                        already_contact,
+                        discovery_packet.computer_name_utf8});
+            }
+            continue;
+        }
+
+        if (readable_socket != socket_handle.value) {
+            continue;
         }
 
         UdpPresencePacket presence_packet{};
@@ -2691,6 +2994,50 @@ void receive_room_udp_audio(
                         presence_send_errors);
                 }
                 update_presence_telemetry(presence, telemetry_snapshot, peers.size());
+                synchronize_peer_info(
+                    socket_handle.value,
+                    peers,
+                    presence,
+                    peer_info,
+                    capture_profile,
+                    render_latency_us,
+                    telemetry_snapshot,
+                    now_ms,
+                    peer_info_send_errors);
+                next_peer_info_sync_ms = now_ms + 50;
+            }
+            continue;
+        }
+
+        UdpPeerInfoPacket peer_info_packet{};
+        const bool is_peer_info_packet = lanspeak::core::validate_udp_peer_info_packet(
+            std::span(
+                reinterpret_cast<const std::byte*>(buffer.data()),
+                static_cast<std::size_t>(std::max(bytes, 0))),
+            peer_info_packet);
+        if (is_peer_info_packet) {
+            const std::optional<IpEndpointKey> endpoint_key = binary_endpoint_key(from);
+            const auto endpoint_it = endpoint_key
+                ? peer_by_endpoint.find(*endpoint_key)
+                : peer_by_endpoint.end();
+            if (endpoint_it == peer_by_endpoint.end()) {
+                ++unknown_datagrams;
+                continue;
+            }
+            if (presence_started) {
+                const std::uint64_t now_ms = GetTickCount64();
+                const lanspeak::core::PeerPresenceSnapshot presence_snapshot =
+                    presence.snapshot(endpoint_it->second);
+                peer_info.update_presence(
+                    endpoint_it->second,
+                    presence_snapshot.state,
+                    presence_snapshot.remote_session_id,
+                    now_ms);
+                for (const PeerInfoAction& action : peer_info.on_packet(
+                         endpoint_it->second, peer_info_packet, now_ms)) {
+                    send_peer_info_action(
+                        socket_handle.value, peers, action, peer_info_send_errors);
+                }
             }
             continue;
         }
@@ -3194,6 +3541,7 @@ int run_room_send_test(
     ERole capture_role,
     const std::optional<std::wstring>& capture_device_selector,
     TelemetrySnapshot* telemetry_snapshot = nullptr,
+    SharedCaptureLatencyProfile* shared_latency_profile = nullptr,
     const std::atomic_bool* input_muted = nullptr,
     const std::atomic_bool* stop_signal = nullptr) {
     WinsockRuntime winsock;
@@ -3333,6 +3681,15 @@ int run_room_send_test(
     LARGE_INTEGER previous_send_time{};
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&start_time);
+    const std::uint32_t fallback_capture_us = SUCCEEDED(stream_latency_result) && stream_latency > 0
+        ? static_cast<std::uint32_t>(std::min<REFERENCE_TIME>(
+              stream_latency / 10,
+              std::numeric_limits<std::uint32_t>::max()))
+        : 0;
+    CaptureLatencyEstimator latency_estimator(
+        static_cast<std::uint64_t>(start_time.QuadPart),
+        static_cast<std::uint64_t>(frequency.QuadPart),
+        fallback_capture_us);
     bool have_previous_send = false;
 
     hr = client->Start();
@@ -3453,6 +3810,21 @@ int run_room_send_test(
                 }
                 const std::span<const size_t> voice_targets = peer_router.targets();
                 if (voice_targets.empty()) {
+                    LARGE_INTEGER profile_time{};
+                    QueryPerformanceCounter(&profile_time);
+                    latency_estimator.add_packet(
+                        qpc_position,
+                        packet_frames,
+                        mix_format->nSamplesPerSec,
+                        static_cast<std::uint64_t>(profile_time.QuadPart),
+                        (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0);
+                    if (shared_latency_profile != nullptr &&
+                        latency_estimator.ready(static_cast<std::uint64_t>(profile_time.QuadPart))) {
+                        shared_latency_profile->publish(
+                            latency_estimator.capture_to_send_us(
+                                static_cast<std::uint64_t>(profile_time.QuadPart)),
+                            latency_estimator.packet_duration_us());
+                    }
                     stats.packets_suppressed += static_cast<std::uint64_t>(peers.size());
                     stats.frames_suppressed +=
                         static_cast<std::uint64_t>(packet_frames) * static_cast<std::uint64_t>(peers.size());
@@ -3500,6 +3872,19 @@ int run_room_send_test(
 
                 LARGE_INTEGER send_time{};
                 QueryPerformanceCounter(&send_time);
+                latency_estimator.add_packet(
+                    qpc_position,
+                    packet_frames,
+                    mix_format->nSamplesPerSec,
+                    static_cast<std::uint64_t>(send_time.QuadPart),
+                    (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0);
+                if (shared_latency_profile != nullptr &&
+                    latency_estimator.ready(static_cast<std::uint64_t>(send_time.QuadPart))) {
+                    shared_latency_profile->publish(
+                        latency_estimator.capture_to_send_us(
+                            static_cast<std::uint64_t>(send_time.QuadPart)),
+                        latency_estimator.packet_duration_us());
+                }
                 header.send_qpc = static_cast<std::uint64_t>(send_time.QuadPart);
 
                 datagram.resize(sizeof(header) + payload.size());
@@ -3586,6 +3971,7 @@ int run_room_send_test_in_thread_context(
     ERole capture_role,
     const std::optional<std::wstring>& capture_device_selector,
     TelemetrySnapshot* telemetry_snapshot = nullptr,
+    SharedCaptureLatencyProfile* shared_latency_profile = nullptr,
     const std::atomic_bool* input_muted = nullptr,
     const std::atomic_bool* stop_signal = nullptr) {
     const ComRuntime com;
@@ -3614,6 +4000,7 @@ int run_room_send_test_in_thread_context(
         capture_role,
         capture_device_selector,
         telemetry_snapshot,
+        shared_latency_profile,
         input_muted,
         stop_signal);
 }
@@ -3772,11 +4159,6 @@ int run_room_test(
     bool start_input_muted,
     HANDLE telemetry_handle,
     HANDLE control_handle) {
-    if (peer_options.empty()) {
-        std::wcout << L"--room requires at least one --peer\n";
-        return 1;
-    }
-
     std::wcout << L"== UDP room voice prototype ==\n";
     std::wcout << L"Mode:         " << (listen_only ? L"listen-only" : L"duplex") << L"\n";
     std::wcout << L"Local listen: " << bind_address << L":" << local_port << L"\n";
@@ -3887,6 +4269,14 @@ int run_room_test(
     RoomMixer room_mixer;
     room_mixer.reserve(buffer_frames);
     TelemetrySnapshot telemetry_snapshot(peers.size());
+    SharedCaptureLatencyProfile shared_capture_latency;
+    const std::uint32_t render_latency_us = SUCCEEDED(stream_latency_result) && stream_latency > 0
+        ? static_cast<std::uint32_t>(std::min<REFERENCE_TIME>(
+              stream_latency / 10,
+              std::numeric_limits<std::uint32_t>::max()))
+        : static_cast<std::uint32_t>(std::min<std::uint64_t>(
+              static_cast<std::uint64_t>(buffer_frames) * 1'000'000u / sample_rate,
+              std::numeric_limits<std::uint32_t>::max()));
     telemetry_snapshot.set_audio_endpoint_diagnostics(
         lanspeak::core::AudioEndpointKind::render,
         lanspeak::core::AudioEndpointDiagnostics{
@@ -3906,6 +4296,7 @@ int run_room_test(
     std::atomic_bool receiver_ready{false};
     std::atomic_bool receiver_failed{false};
     std::atomic_bool presence_enabled{false};
+    std::atomic<std::uint64_t> discovery_request_id{0};
     int send_result = 0;
     std::thread sender;
     std::thread control_reader;
@@ -3918,14 +4309,22 @@ int run_room_test(
             sample_rate,
             peers,
             telemetry_snapshot,
+            shared_capture_latency,
+            render_latency_us,
             presence_enabled,
+            discovery_request_id,
             stop,
             receiver_ready,
             receiver_failed);
     });
     if (control_handle != nullptr && control_handle != INVALID_HANDLE_VALUE) {
         control_reader = std::thread([&]() {
-            read_room_control_commands(control_handle, peers, stop, &input_muted);
+            read_room_control_commands(
+                control_handle,
+                peers,
+                stop,
+                &input_muted,
+                &discovery_request_id);
         });
     }
     if (telemetry.enabled()) {
@@ -3975,6 +4374,7 @@ int run_room_test(
                 capture_role,
                 capture_device_selector,
                 &telemetry_snapshot,
+                &shared_capture_latency,
                 &input_muted,
                 &stop);
             stop = true;

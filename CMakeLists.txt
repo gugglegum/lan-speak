@@ -89,19 +89,25 @@ add_library(LanSpeakCoreSupport STATIC
     src/core/audio_math.cpp
     src/core/diagnostics.cpp
     src/core/jitter_buffer.cpp
+    src/core/latency_model.cpp
+    src/core/network_discovery.cpp
     src/core/options.cpp
     src/core/pcm_audio.cpp
+    src/core/peer_info_tracker.cpp
     src/core/peer_router.cpp
     src/core/presence_tracker.cpp
     src/core/room_mixer.cpp
     src/core/room_session.cpp
     src/core/telemetry_snapshot.cpp
     src/core/udp_audio_packet.cpp
+    src/core/udp_discovery_packet.cpp
+    src/core/udp_peer_info_packet.cpp
     src/core/udp_presence_packet.cpp
     src/core/wasapi_audio.cpp
     src/core/wasapi_devices.cpp)
 
 target_include_directories(LanSpeakCoreSupport PUBLIC src)
+target_link_libraries(LanSpeakCoreSupport PUBLIC iphlpapi ws2_32)
 
 add_library(LanSpeakGuiSupport STATIC
     src/gui/about_dialog.cpp
@@ -116,6 +122,7 @@ add_library(LanSpeakGuiSupport STATIC
     src/gui/network_adapters.cpp
     src/gui/network_settings_dialog.cpp
     src/gui/osd_overlay.cpp
+    src/gui/peer_discovery_dialog.cpp
     src/gui/settings_store.cpp
     src/gui/telemetry_protocol.cpp
     src/gui/tray_icon.cpp

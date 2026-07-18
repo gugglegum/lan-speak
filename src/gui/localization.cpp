@@ -168,8 +168,36 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Отладочная консоль" : L"Debug console";
     case TextId::audio_latency_diagnostics:
         return ru ? L"Диагностика задержек звука" : L"Audio latency diagnostics";
+    case TextId::find_people:
+        return ru ? L"Поиск собеседников..." : L"Find people...";
     case TextId::network_settings:
         return ru ? L"Настройки сети" : L"Network settings";
+    case TextId::discovery_title:
+        return ru ? L"Поиск собеседников" : L"Find people";
+    case TextId::computer_name:
+        return ru ? L"Имя компьютера" : L"Computer name";
+    case TextId::ip_address:
+        return ru ? L"IP-адрес" : L"IP address";
+    case TextId::state:
+        return ru ? L"Состояние" : L"Status";
+    case TextId::refresh:
+        return ru ? L"Обновить" : L"Refresh";
+    case TextId::add_to_contacts:
+        return ru ? L"Добавить в контакты" : L"Add to contacts";
+    case TextId::close:
+        return ru ? L"Закрыть" : L"Close";
+    case TextId::discovery_searching:
+        return ru ? L"Поиск..." : L"Searching...";
+    case TextId::discovery_found:
+        return ru ? L"Найдено:" : L"Found:";
+    case TextId::discovery_nothing_found:
+        return ru ? L"Ничего не найдено" : L"Nothing found";
+    case TextId::discovery_available:
+        return ru ? L"Можно добавить" : L"Available";
+    case TextId::already_in_contacts:
+        return ru ? L"Уже в контактах" : L"Already in contacts";
+    case TextId::discovery_error:
+        return ru ? L"Ошибка поиска, код:" : L"Discovery error, code:";
     case TextId::local_udp_port:
         return ru ? L"Локальный UDP-порт" : L"Local UDP port";
     case TextId::network_interface:
@@ -243,6 +271,8 @@ const wchar_t* localized_text(TextId id, LanguageSetting setting) {
         return ru ? L"Статус неизвестен" : L"Status unknown";
     case TextId::round_trip_time:
         return L"RTT";
+    case TextId::latency_me:
+        return ru ? L"\u044f" : L"me";
     case TextId::help:
         return ru ? L"Помощь" : L"Help";
     case TextId::about:

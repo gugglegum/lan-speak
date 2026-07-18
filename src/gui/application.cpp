@@ -17,6 +17,7 @@
 #include "gui/network_adapters.h"
 #include "gui/network_settings_dialog.h"
 #include "gui/osd_overlay.h"
+#include "gui/peer_discovery_dialog.h"
 #include "gui/settings_store.h"
 #include "gui/tray_icon.h"
 #include "gui/ui_icons.h"
@@ -97,6 +98,7 @@ constexpr int IDC_MENU_DEBUG_CONSOLE = 6005;
 constexpr int IDC_MENU_ABOUT = 6006;
 constexpr int IDC_MENU_AUDIO_LATENCY = 6007;
 constexpr int IDC_MENU_NETWORK_SETTINGS = 6008;
+constexpr int IDC_MENU_FIND_PEOPLE = 6009;
 constexpr int IDC_TRAY_SHOW = 7001;
 constexpr int IDC_TRAY_EXIT = 7002;
 constexpr int kMaxMenuDevices = 500;
@@ -216,6 +218,7 @@ struct ApplicationState {
     std::vector<Contact> contacts;
     lanspeak::gui::ContactMeterBank contact_meters;
     std::vector<lanspeak::gui::PresenceTelemetry> contact_presence;
+    std::vector<lanspeak::gui::LatencyTelemetry> contact_latency;
     std::vector<unsigned int> contact_ptt_refs;
     std::vector<bool> contact_ptt_latched;
     double local_level_db = -90.0;
@@ -223,6 +226,7 @@ struct ApplicationState {
     ULONGLONG local_level_update_ms = 0;
     lanspeak::gui::AudioEndpointTelemetry capture_diagnostics;
     lanspeak::gui::AudioEndpointTelemetry render_diagnostics;
+    lanspeak::gui::PeerDiscoveryDialog peer_discovery_dialog;
 };
 
 ApplicationState g_app;
@@ -935,6 +939,7 @@ double contact_gain_slider_ratio(const Contact& contact) {
 void sync_contact_meter_state() {
     g_app.contact_meters.sync(g_app.contacts.size());
     g_app.contact_presence.resize(g_app.contacts.size());
+    g_app.contact_latency.resize(g_app.contacts.size());
     g_app.contact_ptt_refs.resize(g_app.contacts.size(), 0);
     g_app.contact_ptt_latched.resize(g_app.contacts.size(), false);
 }
@@ -942,6 +947,7 @@ void sync_contact_meter_state() {
 void reset_contact_meter_state() {
     g_app.contact_meters.reset();
     std::fill(g_app.contact_presence.begin(), g_app.contact_presence.end(), lanspeak::gui::PresenceTelemetry{});
+    std::fill(g_app.contact_latency.begin(), g_app.contact_latency.end(), lanspeak::gui::LatencyTelemetry{});
     g_app.local_level_db = -90.0;
     g_app.local_voice_active = false;
     g_app.local_level_update_ms = 0;
@@ -1334,6 +1340,25 @@ void update_contact_tooltip_text(HWND panel) {
                     static_cast<long long>(std::llround(presence->rtt_ms)));
                 g_app.contact_tooltip_text += L" ";
                 g_app.contact_tooltip_text += text(TextId::milliseconds_short);
+            }
+            const auto* latency = contact_index < g_app.contact_latency.size()
+                ? &g_app.contact_latency[contact_index]
+                : nullptr;
+            if (latency && latency->valid) {
+                const std::wstring& name = g_app.contacts[contact_index].name;
+                if (latency->incoming_ms >= 0.0) {
+                    g_app.contact_tooltip_text += L"\r\n" + name + L" \u2192 " +
+                        text(TextId::latency_me) + L": \u2248 " +
+                        std::to_wstring(static_cast<long long>(std::llround(latency->incoming_ms))) +
+                        L" " + text(TextId::milliseconds_short);
+                }
+                if (latency->outgoing_ms >= 0.0) {
+                    g_app.contact_tooltip_text += L"\r\n" +
+                        std::wstring(text(TextId::latency_me)) + L" \u2192 " + name +
+                        L": \u2248 " +
+                        std::to_wstring(static_cast<long long>(std::llround(latency->outgoing_ms))) +
+                        L" " + text(TextId::milliseconds_short);
+                }
             }
         } else if (presence && presence->valid &&
                    presence->state == lanspeak::gui::PeerPresenceState::offline) {
@@ -1734,6 +1759,7 @@ void rebuild_menu_bar() {
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(input_menu), text(TextId::capture_device));
     AppendMenuW(settings_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(output_menu), text(TextId::render_device));
     AppendMenuW(settings_menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(settings_menu, MF_STRING, IDC_MENU_FIND_PEOPLE, text(TextId::find_people));
     AppendMenuW(settings_menu, MF_STRING, IDC_MENU_NETWORK_SETTINGS, text(TextId::network_settings));
     AppendMenuW(
         settings_menu,
@@ -3700,6 +3726,7 @@ void set_stopping_state() {
 }
 
 void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) {
+    g_app.peer_discovery_dialog.apply_telemetry(snapshot);
     if (snapshot.capture.valid) {
         g_app.capture_diagnostics = snapshot.capture;
     }
@@ -3744,6 +3771,25 @@ void apply_telemetry_snapshot(const lanspeak::gui::TelemetrySnapshot& snapshot) 
     if (hovered_presence_changed && g_app.contact_list) {
         update_contact_tooltip_text(g_app.contact_list);
     }
+    const std::size_t latency_count = std::min(
+        g_app.contacts.size(),
+        snapshot.peer_latency.size());
+    bool hovered_latency_changed = false;
+    for (std::size_t index = 0; index < latency_count; ++index) {
+        const auto& incoming = snapshot.peer_latency[index];
+        if (!incoming.valid || index >= g_app.contact_latency.size()) continue;
+        auto& current = g_app.contact_latency[index];
+        if (!current.valid || std::abs(current.incoming_ms - incoming.incoming_ms) >= 0.5 ||
+            std::abs(current.outgoing_ms - incoming.outgoing_ms) >= 0.5) {
+            current = incoming;
+            hovered_latency_changed = hovered_latency_changed ||
+                (g_app.contact_tooltip_presence &&
+                 g_app.contact_tooltip_index == static_cast<int>(index));
+        }
+    }
+    if (hovered_latency_changed && g_app.contact_list) {
+        update_contact_tooltip_text(g_app.contact_list);
+    }
     update_osd_overlay();
 }
 
@@ -3752,12 +3798,6 @@ void start_core(CoreMode mode) {
         append_log(text(TextId::already_running));
         return;
     }
-    if (g_app.contacts.empty()) {
-        append_log(text(TextId::add_contact_before_start));
-        update_button_state();
-        return;
-    }
-
     if (resolve_saved_network_binding()) {
         PostMessageW(g_app.main_window, WM_APP_NETWORK_FALLBACK, 0, 0);
     }
@@ -3846,15 +3886,6 @@ void cleanup_finished_process(std::uint64_t generation) {
 }
 
 void restart_core_after_settings_change() {
-    if (g_app.contacts.empty()) {
-        if (process_is_running()) {
-            append_log(text(TextId::no_contacts_left));
-            stop_core(false);
-        }
-        update_button_state();
-        return;
-    }
-
     if (!process_is_running()) {
         start_core(CoreMode::duplex);
         return;
@@ -3887,7 +3918,7 @@ void select_menu_language(LanguageSetting setting) {
 }
 
 void ensure_core_running() {
-    if (!process_is_running() && !g_app.contacts.empty()) {
+    if (!process_is_running()) {
         start_core(CoreMode::duplex);
     } else {
         update_button_state();
@@ -4279,12 +4310,77 @@ void add_contact_from_editor() {
         g_app.contacts.push_back(contact);
         g_app.contact_meters.append();
         g_app.contact_presence.push_back({});
+        g_app.contact_latency.push_back({});
         g_app.contact_ptt_refs.push_back(0);
         g_app.contact_ptt_latched.push_back(false);
         refresh_contact_list(static_cast<int>(g_app.contacts.size()) - 1);
         save_settings();
         restart_core_after_settings_change();
     }
+}
+
+bool add_discovered_contact(const lanspeak::gui::DiscoveredPeer& peer) {
+    const bool duplicate = std::any_of(
+        g_app.contacts.begin(),
+        g_app.contacts.end(),
+        [&](const Contact& contact) {
+            return contact.port == peer.voice_port &&
+                CompareStringOrdinal(
+                    contact.host.c_str(),
+                    -1,
+                    peer.ip_address.c_str(),
+                    -1,
+                    TRUE) == CSTR_EQUAL;
+        });
+    if (duplicate || peer.ip_address.empty() || peer.voice_port == 0) return false;
+
+    Contact contact;
+    contact.name = peer.computer_name.empty() ? peer.ip_address : peer.computer_name;
+    contact.host = peer.ip_address;
+    contact.port = peer.voice_port;
+    g_app.contacts.push_back(std::move(contact));
+    g_app.contact_meters.append();
+    g_app.contact_presence.push_back({});
+    g_app.contact_latency.push_back({});
+    g_app.contact_ptt_refs.push_back(0);
+    g_app.contact_ptt_latched.push_back(false);
+    refresh_contact_list(static_cast<int>(g_app.contacts.size()) - 1);
+    save_settings();
+    return true;
+}
+
+void show_peer_discovery_dialog() {
+    ensure_core_running();
+    const lanspeak::gui::PeerDiscoveryDialogText dialog_text{
+        text(TextId::discovery_title),
+        text(TextId::computer_name),
+        text(TextId::ip_address),
+        text(TextId::port),
+        text(TextId::state),
+        text(TextId::refresh),
+        text(TextId::add_to_contacts),
+        text(TextId::close),
+        text(TextId::discovery_searching),
+        text(TextId::discovery_found),
+        text(TextId::discovery_nothing_found),
+        text(TextId::discovery_available),
+        text(TextId::already_in_contacts),
+        text(TextId::discovery_error)};
+    const bool added = g_app.peer_discovery_dialog.show(
+        g_app.instance,
+        g_app.main_window,
+        load_app_large_icon(),
+        load_app_small_icon(),
+        dialog_text,
+        [](std::uint64_t request_id) {
+            std::ostringstream command;
+            command << "discover\t" << request_id << "\n";
+            return write_core_control_line(command.str());
+        },
+        [](const lanspeak::gui::DiscoveredPeer& peer) {
+            return add_discovered_contact(peer);
+        });
+    if (added) restart_core_after_settings_change();
 }
 
 void update_selected_contact_from_editor() {
@@ -4323,6 +4419,9 @@ void remove_selected_contact() {
     g_app.contact_meters.erase(static_cast<size_t>(index));
     if (static_cast<size_t>(index) < g_app.contact_presence.size()) {
         g_app.contact_presence.erase(g_app.contact_presence.begin() + index);
+    }
+    if (static_cast<size_t>(index) < g_app.contact_latency.size()) {
+        g_app.contact_latency.erase(g_app.contact_latency.begin() + index);
     }
     if (static_cast<size_t>(index) < g_app.contact_ptt_refs.size()) {
         g_app.contact_ptt_refs.erase(g_app.contact_ptt_refs.begin() + index);
@@ -4539,6 +4638,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 g_app.language_setting,
                 g_app.capture_diagnostics,
                 g_app.render_diagnostics);
+            return 0;
+        }
+        if (command_id == IDC_MENU_FIND_PEOPLE) {
+            show_peer_discovery_dialog();
             return 0;
         }
         if (command_id == IDC_MENU_NETWORK_SETTINGS) {

@@ -1,14 +1,19 @@
 #include "common/line_buffer.h"
 #include "core/audio_math.h"
 #include "core/jitter_buffer.h"
+#include "core/latency_model.h"
+#include "core/network_discovery.h"
 #include "core/options.h"
 #include "core/pcm_audio.h"
+#include "core/peer_info_tracker.h"
 #include "core/peer_router.h"
 #include "core/presence_tracker.h"
 #include "core/room_mixer.h"
 #include "core/room_session.h"
 #include "core/telemetry_snapshot.h"
 #include "core/udp_audio_packet.h"
+#include "core/udp_discovery_packet.h"
+#include "core/udp_peer_info_packet.h"
 #include "core/udp_presence_packet.h"
 #include "core/wasapi_audio.h"
 #include "gui/contact_list_model.h"
@@ -212,6 +217,242 @@ void test_udp_presence_packet_validation() {
     CHECK(validate_udp_presence_packet(serialize_udp_presence_packet(source), parsed));
     source.nonce = 1;
     CHECK(!validate_udp_presence_packet(serialize_udp_presence_packet(source), parsed));
+}
+
+void test_udp_discovery_packet_validation() {
+    using namespace lanspeak::core;
+    UdpDiscoveryPacket query{};
+    query.header.type = UdpDiscoveryType::query;
+    query.header.request_id = 123;
+    query.header.session_id = 456;
+    query.header.voice_port = 49740;
+    UdpDiscoveryPacket parsed{};
+    const auto query_datagram = serialize_udp_discovery_packet(query);
+    CHECK(query_datagram.size() == sizeof(UdpDiscoveryHeader));
+    CHECK(validate_udp_discovery_packet(query_datagram, parsed));
+    CHECK(parsed.header.type == UdpDiscoveryType::query);
+    CHECK(parsed.computer_name_utf8.empty());
+    CHECK(!validate_udp_discovery_packet(
+        std::span(query_datagram).first(query_datagram.size() - 1), parsed));
+
+    UdpDiscoveryPacket response = query;
+    response.header.type = UdpDiscoveryType::response;
+    response.computer_name_utf8 = "PC-\xD0\x9C\xD0\xB0\xD0\xBA\xD1\x81";
+    const auto response_datagram = serialize_udp_discovery_packet(response);
+    CHECK(validate_udp_discovery_packet(response_datagram, parsed));
+    CHECK(parsed.computer_name_utf8 == response.computer_name_utf8);
+
+    auto invalid = query_datagram;
+    UdpDiscoveryHeader header{};
+    std::memcpy(&header, invalid.data(), sizeof(header));
+    header.magic = 0;
+    std::memcpy(invalid.data(), &header, sizeof(header));
+    CHECK(!validate_udp_discovery_packet(invalid, parsed));
+    header = query.header;
+    header.version = 2;
+    std::memcpy(invalid.data(), &header, sizeof(header));
+    CHECK(!validate_udp_discovery_packet(invalid, parsed));
+    header = query.header;
+    header.request_id = 0;
+    std::memcpy(invalid.data(), &header, sizeof(header));
+    CHECK(!validate_udp_discovery_packet(invalid, parsed));
+    header = query.header;
+    header.session_id = 0;
+    std::memcpy(invalid.data(), &header, sizeof(header));
+    CHECK(!validate_udp_discovery_packet(invalid, parsed));
+
+    response.computer_name_utf8.assign(kMaximumDiscoveryNameBytes + 1, 'x');
+    CHECK(serialize_udp_discovery_packet(response).empty());
+    response.computer_name_utf8 = std::string("\xC3\x28", 2);
+    CHECK(!validate_udp_discovery_packet(serialize_udp_discovery_packet(response), parsed));
+}
+
+void test_discovery_network_helpers() {
+    using namespace lanspeak::core;
+    CHECK(ipv4_broadcast_host_order(0xc0a8012au, 24) == 0xc0a801ffu);
+    CHECK(ipv4_broadcast_host_order(0x0a142132u, 16) == 0x0a14ffffu);
+    CHECK(ipv4_broadcast_host_order(0x7f000001u, 32) == 0x7f000001u);
+
+    DiscoveryReplyCache cache;
+    CHECK(cache.should_reply(0x01020304u, 77, 1000));
+    CHECK(!cache.should_reply(0x01020304u, 77, 1001));
+    CHECK(cache.should_reply(0x01020305u, 77, 1001));
+    CHECK(cache.should_reply(0x01020304u, 78, 1001));
+    CHECK(cache.should_reply(0x01020304u, 77, 11'000));
+}
+
+void test_udp_peer_info_packet_validation() {
+    using namespace lanspeak::core;
+    UdpPeerInfoPacket source{};
+    source.type = UdpPeerInfoType::info;
+    source.session_id = 123;
+    source.revision = 7;
+    source.flags = kPeerInfoCaptureToSendValid | kPeerInfoRenderLatencyValid |
+        kPeerInfoPacketDurationValid | kPeerInfoReceiveBufferValid;
+    source.capture_to_send_us = 8'000;
+    source.render_latency_us = 6'000;
+    source.packet_duration_us = 10'000;
+    source.receive_buffer_us = 20'000;
+
+    UdpPeerInfoPacket parsed{};
+    const auto datagram = serialize_udp_peer_info_packet(source);
+    CHECK(validate_udp_peer_info_packet(datagram, parsed));
+    CHECK(parsed.type == UdpPeerInfoType::info);
+    CHECK(parsed.revision == 7);
+    CHECK(parsed.receive_buffer_us == 20'000);
+    CHECK(!validate_udp_peer_info_packet(std::span(datagram).first(datagram.size() - 1), parsed));
+
+    auto invalid = source;
+    invalid.magic = 0;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.version = 2;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.packet_size = 0;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.session_id = 0;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.revision = 0;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.flags |= 0x8000;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.capture_to_send_us = 0;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+    invalid = source;
+    invalid.render_latency_us = 5'000'001;
+    CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(invalid), parsed));
+
+    for (const UdpPeerInfoType type : {UdpPeerInfoType::request, UdpPeerInfoType::ack}) {
+        UdpPeerInfoPacket control{};
+        control.type = type;
+        control.session_id = 123;
+        control.revision = 7;
+        CHECK(validate_udp_peer_info_packet(serialize_udp_peer_info_packet(control), parsed));
+        control.receive_buffer_us = 1;
+        CHECK(!validate_udp_peer_info_packet(serialize_udp_peer_info_packet(control), parsed));
+    }
+}
+
+void test_latency_model() {
+    using namespace lanspeak::core;
+    constexpr std::uint64_t frequency = 10'000'000;
+    constexpr std::uint64_t capture_position = 1'000'000;
+    constexpr std::uint64_t send_position = 1'120'000;
+    const auto age = capture_midpoint_age_us(
+        capture_position, 480, 48'000, send_position, frequency, false);
+    CHECK(age.has_value());
+    CHECK(close_to(*age, 7'000.0));
+    CHECK(!capture_midpoint_age_us(
+        capture_position, 480, 48'000, send_position, frequency, true));
+    CHECK(!capture_midpoint_age_us(
+        capture_position, 480, 48'000, capture_position, frequency, false));
+
+    CaptureLatencyEstimator measured(0, frequency, 20'000);
+    for (int index = 0; index < 31; ++index) {
+        measured.add_packet(capture_position, 480, 48'000, send_position, false);
+    }
+    CHECK(!measured.ready(send_position));
+    measured.add_packet(capture_position, 480, 48'000, send_position, false);
+    CHECK(measured.ready(send_position));
+    CHECK(measured.capture_to_send_us(send_position) == 7'000);
+    CHECK(measured.packet_duration_us() == 10'000);
+    CHECK(measured.valid_sample_count() == 32);
+
+    CaptureLatencyEstimator fallback(100, 1'000, 12'000);
+    fallback.add_packet(0, 480, 48'000, 1'000, true);
+    CHECK(!fallback.ready(2'099));
+    CHECK(fallback.ready(2'100));
+    CHECK(fallback.capture_to_send_us(2'100) == 12'000);
+
+    const PeerLatencyProfile local{8'000, 6'000, 10'000, 5'000};
+    const PeerLatencyProfile remote{12'000, 9'000, 10'000, 20'000};
+    const DirectionalLatencyEstimate estimate =
+        estimate_directional_latency(&local, &remote, 40.0);
+    CHECK(close_to(estimate.incoming_ms, 43.0));
+    CHECK(close_to(estimate.outgoing_ms, 57.0));
+    CHECK(estimate_directional_latency(&local, &remote, -1.0).incoming_ms < 0.0);
+    PeerLatencyProfile incomplete = remote;
+    incomplete.render_latency_us = 0;
+    CHECK(estimate_directional_latency(&local, &incomplete, 4.0).outgoing_ms < 0.0);
+}
+
+void test_peer_info_tracker() {
+    using namespace lanspeak::core;
+    const PeerLatencyProfile local{8'000, 6'000, 10'000, 20'000};
+    PeerInfoTracker tracker(1, 100);
+    tracker.set_local_profile(0, local, 0);
+    tracker.update_presence(0, PeerPresenceState::online, 200, 0);
+    auto actions = tracker.tick(0);
+    CHECK(actions.size() == 1);
+    CHECK(actions[0].packet.type == UdpPeerInfoType::info);
+    CHECK(actions[0].packet.session_id == 100);
+    const std::uint32_t local_revision = actions[0].packet.revision;
+    CHECK(tracker.tick(999).empty());
+    CHECK(tracker.tick(1'000).size() == 2); // INFO retry and first REQUEST.
+
+    UdpPeerInfoPacket ack{};
+    ack.type = UdpPeerInfoType::ack;
+    ack.session_id = 100;
+    ack.revision = local_revision;
+    CHECK(tracker.on_packet(0, ack, 1'001).empty());
+
+    UdpPeerInfoPacket remote_info{};
+    remote_info.type = UdpPeerInfoType::info;
+    remote_info.session_id = 200;
+    remote_info.revision = 3;
+    remote_info.flags = kPeerInfoCaptureToSendValid | kPeerInfoRenderLatencyValid |
+        kPeerInfoPacketDurationValid | kPeerInfoReceiveBufferValid;
+    remote_info.capture_to_send_us = 11'000;
+    remote_info.render_latency_us = 9'000;
+    remote_info.packet_duration_us = 10'000;
+    remote_info.receive_buffer_us = 5'000;
+    actions = tracker.on_packet(0, remote_info, 1'002);
+    CHECK(actions.size() == 1);
+    CHECK(actions[0].packet.type == UdpPeerInfoType::ack);
+    CHECK(actions[0].packet.session_id == 200);
+    CHECK(tracker.snapshot(0).valid);
+    CHECK(tracker.snapshot(0).remote_revision == 3);
+    CHECK(tracker.tick(100'000).empty());
+
+    actions = tracker.on_packet(0, remote_info, 100'001);
+    CHECK(actions.size() == 1); // Duplicate INFO is ACKed without being reapplied.
+    remote_info.revision = 2;
+    CHECK(tracker.on_packet(0, remote_info, 100'002).empty());
+
+    tracker.update_presence(0, PeerPresenceState::online, 201, 100'003);
+    CHECK(!tracker.snapshot(0).valid);
+    remote_info.session_id = 200;
+    remote_info.revision = 4;
+    CHECK(tracker.on_packet(0, remote_info, 100'004).empty());
+    CHECK(tracker.tick(101'003).size() == 2); // New INFO and REQUEST for the new session.
+    UdpPeerInfoPacket request{};
+    request.type = UdpPeerInfoType::request;
+    request.session_id = 200;
+    request.revision = 1;
+    CHECK(tracker.on_packet(0, request, 100'005).empty());
+    request.session_id = 201;
+    actions = tracker.on_packet(0, request, 100'006);
+    CHECK(actions.size() == 1);
+    CHECK(actions[0].packet.type == UdpPeerInfoType::info);
+
+    PeerInfoTracker retries(1, 300);
+    retries.set_local_profile(0, local, 0);
+    retries.update_presence(0, PeerPresenceState::online, 400, 0);
+    CHECK(retries.tick(0).size() == 1);
+    CHECK(retries.tick(1'000).size() == 2);
+    CHECK(retries.tick(3'000).size() == 2);
+    CHECK(retries.tick(3'001).empty());
+    CHECK(retries.tick(8'000).size() == 1); // Final REQUEST only; INFO retries are exhausted.
+    CHECK(retries.tick(100'000).empty());
+
+    retries.update_presence(0, PeerPresenceState::offline, 400, 100'001);
+    CHECK(!retries.snapshot(0).valid);
+    CHECK(retries.tick(100'002).empty());
 }
 
 void test_presence_tracker_lifecycle() {
@@ -498,6 +739,7 @@ void test_hot_paths_do_not_allocate_after_warmup() {
         telemetry.update_peer_meter(0, -18.0, true);
         telemetry.mark_peer_stream(0, 1000);
         telemetry.update_peer_presence(0, PeerPresenceState::online, 1.0);
+        telemetry.update_peer_latency(0, 15.0, 16.0);
         allocations = scope.count();
     }
     CHECK(allocations == 0);
@@ -509,6 +751,7 @@ void test_core_telemetry_snapshot() {
     source.update_peer_meter(0, -12.5, true);
     source.mark_peer_stream(0, 1000);
     source.update_peer_presence(0, lanspeak::core::PeerPresenceState::online, 2.5);
+    source.update_peer_latency(0, 31.5, 42.5);
     source.update_peer_meter(1, -60.0, false);
     source.update_peer_presence(1, lanspeak::core::PeerPresenceState::offline, -1.0);
     source.set_audio_endpoint_diagnostics(
@@ -534,6 +777,9 @@ void test_core_telemetry_snapshot() {
     CHECK(first.peer_presence.size() == 2);
     CHECK(first.peer_presence[0].state == lanspeak::gui::PeerPresenceState::online);
     CHECK(close_to(first.peer_presence[0].rtt_ms, 2.5));
+    CHECK(first.peer_latency.size() == 2);
+    CHECK(close_to(first.peer_latency[0].incoming_ms, 31.5));
+    CHECK(close_to(first.peer_latency[0].outgoing_ms, 42.5));
     CHECK(first.peer_presence[1].state == lanspeak::gui::PeerPresenceState::offline);
     CHECK(first.capture.valid);
     CHECK(first.capture.name_utf8 == "Microphone\\Input");
@@ -579,6 +825,7 @@ void test_fragmented_room_control_commands() {
     std::array<RoomPeerControl*, 2> peers{&first, &second};
     std::atomic_bool input_muted{true};
     std::atomic_bool stop{false};
+    std::atomic<std::uint64_t> discovery_request_id{0};
     lanspeak::common::LineBuffer lines;
 
     consume_room_control_bytes(
@@ -594,7 +841,22 @@ void test_fragmented_room_control_commands() {
         &input_muted,
         &stop);
     CHECK(!stop.load());
-    consume_room_control_bytes("down\n", lines, peers, &input_muted, &stop);
+    consume_room_control_bytes(
+        "down\ndisc",
+        lines,
+        peers,
+        &input_muted,
+        &stop,
+        nullptr,
+        &discovery_request_id);
+    consume_room_control_bytes(
+        "over 998877\n",
+        lines,
+        peers,
+        &input_muted,
+        &stop,
+        nullptr,
+        &discovery_request_id);
 
     const RoomPeerControlSnapshot updated = snapshot_room_peer_control(second);
     CHECK(close_to(updated.gain, 1.5));
@@ -607,6 +869,7 @@ void test_fragmented_room_control_commands() {
     CHECK(updated.private_talk);
     CHECK(!input_muted.load());
     CHECK(stop.load());
+    CHECK(discovery_request_id.load() == 998877);
 }
 
 void test_ducking_and_vu_math() {
@@ -748,6 +1011,15 @@ void test_room_peer_receive_buffer_options() {
     CHECK(options.room_peers[0].receive_buffer_ms == 45);
     CHECK(!options.room_peers[0].global_ptt_enabled);
     CHECK(options.room_peers[1].receive_buffer_ms == kDefaultReceiveBufferMs);
+
+    std::vector<std::wstring> empty_room_arguments{
+        L"LanSpeakCore.exe", L"--room", L"49740"};
+    argv.clear();
+    for (std::wstring& argument : empty_room_arguments) argv.push_back(argument.data());
+    const ProbeOptions empty_room = parse_options(static_cast<int>(argv.size()), argv.data());
+    CHECK(!empty_room.show_help);
+    CHECK(empty_room.mode == ProbeOptions::Mode::room);
+    CHECK(empty_room.room_peers.empty());
 }
 
 void test_network_adapter_resolution() {
@@ -768,6 +1040,7 @@ void test_fragmented_telemetry_snapshot() {
     CHECK(parser.append(
         "level\t1\t-24\t1\t1\n"
         "peer_presence\t0\t1\t3.5\n"
+        "peer_latency\t0\t14.5\t18.5\n"
         "audio_input\tUSB\\tMic\t48000\t2\t32\t2.7\t5.8\t8.1\t1\t-1\n"));
     const auto& snapshot = parser.snapshot();
     CHECK(snapshot.local.valid);
@@ -779,13 +1052,33 @@ void test_fragmented_telemetry_snapshot() {
     CHECK(snapshot.peer_presence.size() == 1);
     CHECK(snapshot.peer_presence[0].state == lanspeak::gui::PeerPresenceState::online);
     CHECK(close_to(snapshot.peer_presence[0].rtt_ms, 3.5));
+    CHECK(snapshot.peer_latency.size() == 1);
+    CHECK(close_to(snapshot.peer_latency[0].incoming_ms, 14.5));
+    CHECK(close_to(snapshot.peer_latency[0].outgoing_ms, 18.5));
     CHECK(snapshot.capture.valid);
     CHECK(snapshot.capture.name_utf8 == "USB\tMic");
     CHECK(snapshot.capture.sample_rate == 48000);
     CHECK(snapshot.capture.low_latency_shared);
+    CHECK(parser.append(
+        "discovery_peer\t44\t55\t192.168.0.20\t49740\t0\tDESKTOP\\tONE\n"
+        "discovery_error\t45\t10049\n"));
+    CHECK(snapshot.discovery_peers.size() == 1);
+    CHECK(snapshot.discovery_peers[0].request_id == 44);
+    CHECK(snapshot.discovery_peers[0].session_id == 55);
+    CHECK(snapshot.discovery_peers[0].voice_port == 49740);
+    CHECK(snapshot.discovery_peers[0].computer_name_utf8 == "DESKTOP\tONE");
+    CHECK(snapshot.discovery_error.valid);
+    CHECK(snapshot.discovery_error.request_id == 45);
+    CHECK(snapshot.discovery_error.error_code == 10049);
+
+    CHECK(parser.append(
+        "discovery_peer\t44\t55\t192.168.0.20\t49740\t1\tDESKTOP\\tONE\n"));
+    CHECK(snapshot.discovery_peers.size() == 1);
+    CHECK(snapshot.discovery_peers[0].already_contact);
 
     parser.clear();
     CHECK(parser.snapshot().peer_presence.empty());
+    CHECK(parser.snapshot().peer_latency.empty());
     CHECK(parser.append("peer_level\t0\t-30\t1\t1\n"));
     CHECK(parser.snapshot().peers.size() == 1);
     CHECK(parser.snapshot().peer_presence.empty());
@@ -876,6 +1169,11 @@ int main() {
     try {
         test_udp_packet_validation();
         test_udp_presence_packet_validation();
+        test_udp_discovery_packet_validation();
+        test_discovery_network_helpers();
+        test_udp_peer_info_packet_validation();
+        test_latency_model();
+        test_peer_info_tracker();
         test_presence_tracker_lifecycle();
         test_pcm_conversion_and_resampling();
         test_wasapi_pcm_payload_and_render_conversion();

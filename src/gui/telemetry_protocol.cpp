@@ -1,5 +1,6 @@
 #include "gui/telemetry_protocol.h"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -113,6 +114,48 @@ bool TelemetryParser::parse_line(const std::string& line) {
     if (line.rfind("audio_output\t", 0) == 0) {
         return parse_audio_endpoint_line(line, snapshot_.render);
     }
+    if (line.rfind("discovery_peer\t", 0) == 0) {
+        const std::vector<std::string> fields = split_tab_fields(line);
+        DiscoveryPeerTelemetry peer;
+        unsigned int port = 0;
+        int already_contact = 0;
+        if (fields.size() != 7 ||
+            !parse_number(fields[1], peer.request_id) || peer.request_id == 0 ||
+            !parse_number(fields[2], peer.session_id) || peer.session_id == 0 ||
+            !parse_number(fields[4], port) || port == 0 || port > UINT16_MAX ||
+            !parse_number(fields[5], already_contact) ||
+            (already_contact != 0 && already_contact != 1)) {
+            return false;
+        }
+        peer.ip_utf8 = unescape_telemetry_field(fields[3]);
+        peer.voice_port = static_cast<std::uint16_t>(port);
+        peer.already_contact = already_contact != 0;
+        peer.computer_name_utf8 = unescape_telemetry_field(fields[6]);
+        const auto existing = std::find_if(
+            snapshot_.discovery_peers.begin(),
+            snapshot_.discovery_peers.end(),
+            [&](const DiscoveryPeerTelemetry& item) {
+                return item.request_id == peer.request_id && item.session_id == peer.session_id;
+            });
+        if (existing == snapshot_.discovery_peers.end()) {
+            snapshot_.discovery_peers.push_back(std::move(peer));
+        } else {
+            *existing = std::move(peer);
+        }
+        return true;
+    }
+    if (line.rfind("discovery_error\t", 0) == 0) {
+        const std::vector<std::string> fields = split_tab_fields(line);
+        DiscoveryErrorTelemetry error;
+        if (fields.size() != 3 ||
+            !parse_number(fields[1], error.request_id) || error.request_id == 0 ||
+            !parse_number(fields[2], error.error_code) || error.error_code == 0) {
+            return false;
+        }
+        error.valid = true;
+        snapshot_.discovery_error = error;
+        return true;
+    }
 
     std::istringstream stream(line);
     stream.imbue(std::locale::classic());
@@ -143,6 +186,17 @@ bool TelemetryParser::parse_line(const std::string& line) {
             true,
             static_cast<PeerPresenceState>(state),
             rtt_ms};
+        return true;
+    }
+    if (kind == "peer_latency") {
+        std::size_t index = 0;
+        double incoming_ms = -1.0;
+        double outgoing_ms = -1.0;
+        if (!(stream >> index >> incoming_ms >> outgoing_ms)) return false;
+        if (snapshot_.peer_latency.size() <= index) {
+            snapshot_.peer_latency.resize(index + 1);
+        }
+        snapshot_.peer_latency[index] = LatencyTelemetry{true, incoming_ms, outgoing_ms};
         return true;
     }
     if (kind != "peer_level") {

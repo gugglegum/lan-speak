@@ -55,7 +55,8 @@ bool apply_room_control_line(
     std::span<RoomPeerControl* const> peers,
     std::atomic_bool* input_muted,
     std::atomic_bool* stop,
-    std::wostream* diagnostics) {
+    std::wostream* diagnostics,
+    std::atomic<std::uint64_t>* discovery_request_id) {
     if (line.empty()) return false;
     std::istringstream stream{std::string(line)};
     stream.imbue(std::locale::classic());
@@ -75,6 +76,16 @@ bool apply_room_control_line(
         }
         if (input_muted != nullptr) input_muted->store(muted != 0, std::memory_order_relaxed);
         log(diagnostics, muted != 0 ? L"Control: input muted" : L"Control: input open");
+        return true;
+    }
+    if (command == "discover") {
+        std::uint64_t request_id = 0;
+        stream >> request_id;
+        if (!stream || request_id == 0 || discovery_request_id == nullptr) {
+            log(diagnostics, L"Control: invalid discover request ignored");
+            return false;
+        }
+        discovery_request_id->store(request_id, std::memory_order_release);
         return true;
     }
     if (command == "peer_talk") {
@@ -139,11 +150,13 @@ void consume_room_control_bytes(
     std::span<RoomPeerControl* const> peers,
     std::atomic_bool* input_muted,
     std::atomic_bool* stop,
-    std::wostream* diagnostics) {
+    std::wostream* diagnostics,
+    std::atomic<std::uint64_t>* discovery_request_id) {
     lines.append(bytes);
     std::string line;
     while (lines.next(line)) {
-        apply_room_control_line(line, peers, input_muted, stop, diagnostics);
+        apply_room_control_line(
+            line, peers, input_muted, stop, diagnostics, discovery_request_id);
     }
 }
 

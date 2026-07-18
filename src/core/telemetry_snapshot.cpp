@@ -2,6 +2,7 @@
 
 #include "core/audio_math.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <locale>
@@ -93,6 +94,15 @@ void TelemetrySnapshot::update_peer_presence(
     peers_[peer_index].presence_rtt_ms.store(rtt_ms, std::memory_order_relaxed);
 }
 
+void TelemetrySnapshot::update_peer_latency(
+    std::size_t peer_index,
+    double incoming_ms,
+    double outgoing_ms) {
+    if (peer_index >= peer_count_) return;
+    peers_[peer_index].incoming_latency_ms.store(incoming_ms, std::memory_order_relaxed);
+    peers_[peer_index].outgoing_latency_ms.store(outgoing_ms, std::memory_order_relaxed);
+}
+
 void TelemetrySnapshot::set_audio_endpoint_diagnostics(
     AudioEndpointKind kind,
     AudioEndpointDiagnostics diagnostics) {
@@ -106,6 +116,33 @@ void TelemetrySnapshot::set_audio_endpoint_diagnostics(
 
 void TelemetrySnapshot::update_render_padding_ms(double padding_ms) {
     render_padding_ms_.store(padding_ms, std::memory_order_relaxed);
+}
+
+void TelemetrySnapshot::begin_discovery(std::uint64_t request_id) {
+    std::lock_guard lock(discovery_mutex_);
+    discovery_request_id_ = request_id;
+    discovery_error_code_ = 0;
+    discovered_peers_.clear();
+}
+
+void TelemetrySnapshot::add_discovered_peer(DiscoveredPeerTelemetry peer) {
+    std::lock_guard lock(discovery_mutex_);
+    if (peer.request_id == 0 || peer.request_id != discovery_request_id_) return;
+    const auto found = std::find_if(
+        discovered_peers_.begin(), discovered_peers_.end(), [&](const auto& current) {
+            return current.session_id == peer.session_id;
+        });
+    if (found == discovered_peers_.end()) {
+        discovered_peers_.push_back(std::move(peer));
+    } else if (!found->already_contact || peer.already_contact) {
+        *found = std::move(peer);
+    }
+}
+
+void TelemetrySnapshot::set_discovery_error(std::uint64_t request_id, int error_code) {
+    std::lock_guard lock(discovery_mutex_);
+    if (request_id != discovery_request_id_) return;
+    discovery_error_code_ = error_code;
 }
 
 std::string TelemetrySnapshot::serialize(
@@ -130,6 +167,9 @@ std::string TelemetrySnapshot::serialize(
         stream << "peer_presence\t" << index << "\t"
                << peers_[index].presence_state.load(std::memory_order_relaxed) << "\t"
                << peers_[index].presence_rtt_ms.load(std::memory_order_relaxed) << "\n";
+        stream << "peer_latency\t" << index << "\t"
+               << peers_[index].incoming_latency_ms.load(std::memory_order_relaxed) << "\t"
+               << peers_[index].outgoing_latency_ms.load(std::memory_order_relaxed) << "\n";
     }
     {
         std::lock_guard lock(audio_diagnostics_mutex_);
@@ -139,6 +179,21 @@ std::string TelemetrySnapshot::serialize(
             "audio_output",
             render_diagnostics_,
             render_padding_ms_.load(std::memory_order_relaxed));
+    }
+    {
+        std::lock_guard lock(discovery_mutex_);
+        if (discovery_request_id_ != 0 && discovery_error_code_ != 0) {
+            stream << "discovery_error\t" << discovery_request_id_ << "\t"
+                   << discovery_error_code_ << "\n";
+        }
+        for (const auto& peer : discovered_peers_) {
+            stream << "discovery_peer\t" << peer.request_id << "\t"
+                   << peer.session_id << "\t"
+                   << escape_telemetry_field(peer.ip_utf8) << "\t"
+                   << peer.voice_port << "\t"
+                   << (peer.already_contact ? 1 : 0) << "\t"
+                   << escape_telemetry_field(peer.computer_name_utf8) << "\n";
+        }
     }
     return stream.str();
 }

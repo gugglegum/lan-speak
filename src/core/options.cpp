@@ -821,7 +821,7 @@ void print_usage() {
     std::wcout << L"       LanSpeakCore.exe [gain options] --udp-play <port> [seconds]\n";
     std::wcout << L"       LanSpeakCore.exe [gain options] --udp-audio-loopback [seconds] [port]\n";
     std::wcout << L"       LanSpeakCore.exe [gain options] --duplex <local-port> <peer-host> <peer-port> [seconds]\n\n";
-    std::wcout << L"       LanSpeakCore.exe --room <local-port> [--listen-only] --peer <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt] [receive-buffer-ms]...\n\n";
+    std::wcout << L"       LanSpeakCore.exe --room <local-port> [--listen-only] [--peer <host> <port> <gain> <duck-db> <threshold> <attack-ms> <hold-ms> <release-ms> [global-ptt] [receive-buffer-ms]]...\n\n";
     std::wcout << L"Default mode checks shared WASAPI paths only, so it should coexist with CS2 voice.\n";
     std::wcout << L"--list-devices prints active WASAPI endpoints in a stable GUI-friendly format.\n";
     std::wcout << L"--capture-test opens the selected/default capture role in shared/event mode and measures callbacks.\n";
@@ -831,7 +831,7 @@ void print_usage() {
     std::wcout << L"--udp-audio-loopback runs capture -> UDP -> jitter buffer -> render on localhost.\n";
     std::wcout << L"--duplex sends microphone audio to a peer and plays incoming peer audio until Ctrl+C.\n";
     std::wcout << L"  Add optional [seconds] to --duplex only for bounded tests.\n";
-    std::wcout << L"--room is a multi-peer full-mesh voice mode. Repeat --peer for each contact.\n";
+    std::wcout << L"--room is a multi-peer full-mesh voice mode. Repeat --peer for each contact; an empty room is valid.\n";
     std::wcout << L"  --bind-address selects the local IPv4 address for room receive and send sockets.\n";
     std::wcout << L"  Add --listen-only to --room to receive and play contacts without sending microphone audio.\n";
     std::wcout << L"  Add --input-muted to start room sending with microphone audio muted until a control command opens it.\n";

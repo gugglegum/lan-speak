@@ -42,7 +42,8 @@ bool apply_room_control_line(
     std::span<RoomPeerControl* const> peers,
     std::atomic_bool* input_muted,
     std::atomic_bool* stop,
-    std::wostream* diagnostics = nullptr);
+    std::wostream* diagnostics = nullptr,
+    std::atomic<std::uint64_t>* discovery_request_id = nullptr);
 
 void consume_room_control_bytes(
     std::string_view bytes,
@@ -50,6 +51,7 @@ void consume_room_control_bytes(
     std::span<RoomPeerControl* const> peers,
     std::atomic_bool* input_muted,
     std::atomic_bool* stop,
-    std::wostream* diagnostics = nullptr);
+    std::wostream* diagnostics = nullptr,
+    std::atomic<std::uint64_t>* discovery_request_id = nullptr);
 
 } // namespace lanspeak::core

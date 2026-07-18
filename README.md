@@ -15,7 +15,8 @@ LanSpeak uses shared-mode WASAPI and raw PCM over UDP. There is no central serve
 - Raw mono PCM16 over UDP with a small jitter buffer and no codec delay.
 - Full-mesh rooms for two or more participants without a server.
 - Configurable local UDP port and IPv4 interface binding.
-- Per-contact online presence with low-frequency peer-to-peer UDP probes and RTT diagnostics.
+- On-demand discovery of other LAN Speak users on the trusted local network, using their Windows computer names.
+- Per-contact online presence with low-frequency peer-to-peer UDP probes, RTT diagnostics, and estimated voice pipeline latency in both directions.
 - Global and per-contact push-to-talk, including system-wide keyboard and mouse hotkeys.
 - Per-contact gain, mute, and inclusion in or exclusion from group PTT.
 - Per-contact receiver-side self-ducking with configurable attack, hold, and release.
@@ -31,12 +32,13 @@ LanSpeak uses shared-mode WASAPI and raw PCM over UDP. There is no central serve
 2. Run `LanSpeak.exe`. The console core starts automatically in the background.
 3. If Windows Firewall asks for access for `LanSpeakCore.exe`, allow it on **Private networks**.
 4. Select the input and output endpoints from the **Settings** menu.
-5. Add every other participant as a contact using their LAN IP address and UDP port. The default port is `49740`.
+5. Open **Settings > Find people...** to find LAN Speak users on the local network, or add a contact manually using its LAN IP address and UDP port. The default voice port is `49740`.
 6. Every participant must add every other participant to form the full mesh.
 7. Use the group talk button or configure global/per-contact keyboard or mouse PTT hotkeys under **Settings > Global Hotkeys**.
 
 The application starts in listening mode with outgoing microphone transmission disabled. Settings and contacts are stored in `settings.txt` next to the executables.
 The default network binding accepts traffic on all interfaces (`0.0.0.0`). It can be restricted under **Settings > Network settings** when a computer has multiple network adapters.
+Discovery is started only while the **Find people** window is open or when its **Refresh** button is pressed. It uses UDP port `49741` and is intended only for trusted local networks.
 
 ## Building
 
@@ -118,6 +120,7 @@ LanSpeakCore.exe --udp-audio-loopback 10 49740
 - At `48 kHz`, one active PCM stream uses about `0.8 Mbit/s` of payload bandwidth per recipient.
 
 The practical latency target is approximately `20-50 ms`, but actual results depend on audio hardware, WASAPI periods, drivers, scheduling, and the network.
+For two current clients, the contact tooltip estimates each direction separately from measured capture-to-send time, half of the current RTT, the recipient's configured receive buffer, and WASAPI render latency. The `≈` value is a stable software pipeline estimate rather than an acoustic mouth-to-ear measurement.
 
 ## Repository Layout
 
@@ -134,7 +137,7 @@ tools/       Development scripts
 
 - Windows-only; WASAPI is required.
 - Intended for trusted LANs: audio and control metadata are neither encrypted nor authenticated.
-- No NAT traversal, relay server, discovery service, or Internet congestion control.
+- No NAT traversal, relay server, Internet-wide discovery service, or Internet congestion control. Local discovery normally does not cross routers or VLANs.
 - Raw PCM favors latency and simplicity over bandwidth efficiency.
 - Self-ducking suppresses the local user's voice relayed back by a nearby peer; it is not a full acoustic echo canceller.
 - This is still an experimental project. Test audio devices and firewall rules before relying on it during a game.
