@@ -184,6 +184,9 @@ struct ApplicationState {
     bool button_ptt_down = false;
     bool hotkey_ptt_active = false;
     bool continuous_talk = false;
+    bool restore_latched_talk_after_restart = false;
+    bool restart_continuous_talk = false;
+    std::vector<bool> restart_contact_ptt_latched;
     bool debug_console_visible = false;
     bool exit_requested = false;
     lanspeak::gui::TrayIcon tray_icon;
@@ -2151,6 +2154,7 @@ void reset_push_to_talk_state();
 void update_push_to_talk_button_text();
 bool set_contact_push_to_talk_active(size_t index, bool active);
 void reset_contact_push_to_talk_state();
+void restore_latched_talk_state_after_restart();
 
 LRESULT CALLBACK contact_panel_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -3576,6 +3580,7 @@ void start_core(CoreMode mode) {
     reset_push_to_talk_state();
     g_app.core_mode = mode;
     set_running_state(true);
+    restore_latched_talk_state_after_restart();
 }
 
 void cleanup_finished_process(std::uint64_t generation);
@@ -3635,6 +3640,12 @@ void restart_core_after_settings_change() {
         return;
     }
 
+    if (!g_app.restore_latched_talk_after_restart) {
+        sync_contact_meter_state();
+        g_app.restore_latched_talk_after_restart = true;
+        g_app.restart_continuous_talk = g_app.continuous_talk;
+        g_app.restart_contact_ptt_latched = g_app.contact_ptt_latched;
+    }
     stop_core(true, CoreMode::duplex);
 }
 
@@ -3819,6 +3830,28 @@ void reset_push_to_talk_state() {
     update_push_to_talk_button_text();
     repaint_contact_talk_state_now();
     update_osd_overlay();
+}
+
+void restore_latched_talk_state_after_restart() {
+    if (!g_app.restore_latched_talk_after_restart) {
+        return;
+    }
+
+    const bool continuous_talk = g_app.restart_continuous_talk;
+    std::vector<bool> contact_latches = std::move(g_app.restart_contact_ptt_latched);
+    g_app.restore_latched_talk_after_restart = false;
+    g_app.restart_continuous_talk = false;
+    g_app.restart_contact_ptt_latched.clear();
+
+    if (continuous_talk) {
+        set_continuous_talk_active(true);
+    }
+    const size_t count = std::min(g_app.contacts.size(), contact_latches.size());
+    for (size_t index = 0; index < count; ++index) {
+        if (contact_latches[index]) {
+            set_contact_push_to_talk_latched(index, true);
+        }
+    }
 }
 
 bool can_start_global_talk() {
@@ -4037,9 +4070,6 @@ void update_selected_contact_from_editor() {
     const int index = selected_contact_index();
     if (index < 0 || static_cast<size_t>(index) >= g_app.contacts.size()) {
         return;
-    }
-    if (contact_push_to_talk_active(static_cast<size_t>(index))) {
-        reset_contact_push_to_talk_state();
     }
     const Contact previous = g_app.contacts[static_cast<size_t>(index)];
     Contact contact;

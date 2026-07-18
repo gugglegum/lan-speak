@@ -24,6 +24,10 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 - Default input and output device selection now uses the Windows `console` role, matching the devices selected on the main Sound settings page.
 - Development and pre-release builds now derive their displayed and Windows executable versions from an exact SemVer Git tag or a CMake override without modifying tracked source files.
 
+### Fixed
+
+- Editing or cancelling a contact no longer clears its latched `Talk continuously` state. Latched group and per-contact transmission is restored after a Core restart caused by settings changes.
+
 ## [1.0.0] - 2026-07-13
 
 ### Added
