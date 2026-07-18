@@ -2153,8 +2153,9 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
         name = g_app.contacts[index].name;
     }
 
+    const LONG content_left = card_rect.left + 30;
     RECT text_rect = card_rect;
-    text_rect.left += 30;
+    text_rect.left = content_left;
     const RECT mute_button = contact_mute_button_rect_from_card(card_rect);
     const RECT ptt_button = contact_ptt_button_rect_from_card(card_rect);
     const RECT global_ptt_button = contact_global_ptt_button_rect_from_card(card_rect);
@@ -2172,12 +2173,12 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
         g_app.contact_presence[index].state == lanspeak::gui::PeerPresenceState::online;
     const COLORREF presence_color = online
         ? RGB(42, 168, 91)
-        : (selected ? RGB(135, 148, 164) : RGB(166, 176, 188));
+        : RGB(194, 202, 212);
     RECT presence_rect{
-        card_rect.left + 13,
-        card_rect.top + (card_rect.bottom - card_rect.top) / 2 - 4,
-        card_rect.left + 21,
-        card_rect.top + (card_rect.bottom - card_rect.top) / 2 + 4};
+        card_rect.left + 12,
+        card_rect.top + (card_rect.bottom - card_rect.top) / 2 - 5,
+        card_rect.left + 22,
+        card_rect.top + (card_rect.bottom - card_rect.top) / 2 + 5};
     HGDIOBJ old_presence_brush = SelectObject(dc, g_app.gdi_objects.brush(presence_color));
     HGDIOBJ old_presence_pen = SelectObject(dc, g_app.gdi_objects.pen(presence_color));
     Ellipse(dc, presence_rect.left, presence_rect.top, presence_rect.right, presence_rect.bottom);
@@ -2205,7 +2206,7 @@ void draw_contact_card(HDC dc, const RECT& row_rect, size_t index, bool focused)
     const bool voice_active = meter != nullptr && meter->voice_active;
     const bool stream_active = meter != nullptr && meter->stream_active;
     RECT vu_track{
-        card_rect.left + 16,
+        content_left,
         card_rect.bottom - 17,
         controls_left - 14,
         card_rect.bottom - 10};
