@@ -125,16 +125,16 @@ target_include_directories(LanSpeakGuiSupport PUBLIC src "${LANSPEAK_GENERATED_D
 target_link_libraries(LanSpeakGuiSupport PUBLIC iphlpapi ws2_32)
 
 add_executable(LanSpeakCore
-    main.cpp
+    src/core/main.cpp
     src/core/application.cpp
     "${LANSPEAK_GENERATED_DIR}/LanSpeakCoreVersion.rc")
 target_compile_definitions(LanSpeakCore PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(LanSpeakCore PRIVATE LanSpeakCommon LanSpeakCoreSupport ole32 uuid avrt ws2_32)
 
 add_executable(LanSpeak WIN32
-    gui.cpp
+    src/gui/main.cpp
     src/gui/application.cpp
-    LanSpeakGui.rc
+    src/gui/app_resources.rc
     "${LANSPEAK_GENERATED_DIR}/LanSpeakVersion.rc")
 target_include_directories(LanSpeak PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(LanSpeak PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

@@ -1,4 +1,4 @@
-#include "resource.h"
+#include "resource_ids.h"
 
 // GUI application, window, and tray icon. Transparent tray-friendly variant.
 IDI_LANSPEAK ICON "assets\\LanSpeak.ico"

@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 
-#include "resource.h"
+#include "resource_ids.h"
 
 #include "gui/about_dialog.h"
 #include "gui/audio_latency_dialog.h"
