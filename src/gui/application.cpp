@@ -2555,7 +2555,6 @@ constexpr int kHotkeyContactListTop = 82;
 constexpr int kHotkeyContactListWidth = 528;
 
 struct HotkeyDialogState {
-    HWND window = nullptr;
     HWND owner = nullptr;
     HWND display = nullptr;
     HWND record_button = nullptr;
@@ -2712,15 +2711,72 @@ void set_hotkey_dialog_recording(HotkeyDialogState& state, int index) {
     const int previous = state.recording_index;
     state.recording_index = index;
     state.recording_mouse_vk = 0;
-    if (index == kHotkeyRecordingNone) {
-        if (state.window && GetCapture() == state.window) {
-            ReleaseCapture();
-        }
-    } else if (state.window) {
-        SetCapture(state.window);
-    }
     update_hotkey_dialog_display(state, previous);
     update_hotkey_dialog_display(state, index);
+}
+
+UINT hotkey_dialog_mouse_vk(UINT message, WPARAM wparam) {
+    switch (message) {
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+        return VK_RBUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        return VK_MBUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP: {
+        const WORD button = HIWORD(wparam);
+        if (button == XBUTTON1) return VK_XBUTTON1;
+        if (button == XBUTTON2) return VK_XBUTTON2;
+        return 0;
+    }
+    default:
+        return 0;
+    }
+}
+
+bool handle_hotkey_dialog_recording_message(HotkeyDialogState& state, const MSG& message) {
+    if (state.recording_index == kHotkeyRecordingNone) {
+        return false;
+    }
+
+    if (message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN) {
+        const UINT vk = static_cast<UINT>(message.wParam);
+        if (vk == VK_ESCAPE) {
+            set_hotkey_dialog_recording(state, kHotkeyRecordingNone);
+            return true;
+        }
+        if (is_modifier_key(vk)) {
+            return true;
+        }
+
+        Hotkey& hotkey = hotkey_dialog_hotkey(state, state.recording_index);
+        hotkey.modifiers = current_hotkey_modifiers();
+        hotkey.vk = vk;
+        set_hotkey_dialog_recording(state, kHotkeyRecordingNone);
+        return true;
+    }
+
+    const UINT mouse_vk = hotkey_dialog_mouse_vk(message.message, message.wParam);
+    if (!is_supported_mouse_hotkey(mouse_vk)) {
+        return false;
+    }
+
+    const bool button_down = message.message == WM_RBUTTONDOWN ||
+        message.message == WM_MBUTTONDOWN || message.message == WM_XBUTTONDOWN;
+    if (button_down) {
+        Hotkey& hotkey = hotkey_dialog_hotkey(state, state.recording_index);
+        hotkey.modifiers = 0;
+        hotkey.vk = mouse_vk;
+        state.recording_mouse_vk = mouse_vk;
+        return true;
+    }
+
+    if (mouse_vk == state.recording_mouse_vk) {
+        set_hotkey_dialog_recording(state, kHotkeyRecordingNone);
+        return true;
+    }
+    return false;
 }
 
 LRESULT CALLBACK hotkey_contact_list_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -2968,87 +3024,11 @@ LRESULT CALLBACK hotkey_dialog_proc(HWND window, UINT message, WPARAM wparam, LP
     case WM_CREATE:
         state = reinterpret_cast<HotkeyDialogState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (state) {
-            state->window = window;
             create_hotkey_dialog_controls(window, *state);
             SetFocus(state->record_button);
             return 0;
         }
         return -1;
-    case WM_GETDLGCODE:
-        if (state && state->recording_index != kHotkeyRecordingNone) {
-            return DLGC_WANTALLKEYS;
-        }
-        break;
-    case WM_KEYDOWN:
-    case WM_SYSKEYDOWN:
-        if (state && state->recording_index != kHotkeyRecordingNone) {
-            const UINT vk = static_cast<UINT>(wparam);
-            if (vk == VK_ESCAPE) {
-                set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
-                return 0;
-            }
-            if (is_modifier_key(vk)) {
-                return 0;
-            }
-
-            Hotkey& hotkey = hotkey_dialog_hotkey(*state, state->recording_index);
-            hotkey.modifiers = current_hotkey_modifiers();
-            hotkey.vk = vk;
-            set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
-            return 0;
-        }
-        break;
-    case WM_RBUTTONDOWN:
-    case WM_MBUTTONDOWN:
-    case WM_XBUTTONDOWN:
-        if (state && state->recording_index != kHotkeyRecordingNone) {
-            UINT vk = 0;
-            if (message == WM_RBUTTONDOWN) vk = VK_RBUTTON;
-            if (message == WM_MBUTTONDOWN) vk = VK_MBUTTON;
-            if (message == WM_XBUTTONDOWN) {
-                const WORD button = HIWORD(wparam);
-                if (button == XBUTTON1) vk = VK_XBUTTON1;
-                if (button == XBUTTON2) vk = VK_XBUTTON2;
-            }
-            if (is_supported_mouse_hotkey(vk)) {
-                Hotkey& hotkey = hotkey_dialog_hotkey(*state, state->recording_index);
-                hotkey.modifiers = 0;
-                hotkey.vk = vk;
-                state->recording_mouse_vk = vk;
-                return message == WM_XBUTTONDOWN ? TRUE : 0;
-            }
-        }
-        break;
-    case WM_RBUTTONUP:
-    case WM_MBUTTONUP:
-    case WM_XBUTTONUP:
-        if (state && state->recording_index != kHotkeyRecordingNone && state->recording_mouse_vk != 0) {
-            UINT vk = 0;
-            if (message == WM_RBUTTONUP) vk = VK_RBUTTON;
-            if (message == WM_MBUTTONUP) vk = VK_MBUTTON;
-            if (message == WM_XBUTTONUP) {
-                const WORD button = HIWORD(wparam);
-                if (button == XBUTTON1) vk = VK_XBUTTON1;
-                if (button == XBUTTON2) vk = VK_XBUTTON2;
-            }
-            if (vk == state->recording_mouse_vk) {
-                set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
-                return message == WM_XBUTTONUP ? TRUE : 0;
-            }
-        }
-        break;
-    case WM_LBUTTONDOWN:
-        if (state && state->recording_index != kHotkeyRecordingNone) {
-            set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
-            return 0;
-        }
-        break;
-    case WM_CAPTURECHANGED:
-        if (state && state->recording_index != kHotkeyRecordingNone &&
-            reinterpret_cast<HWND>(lparam) != state->window) {
-            set_hotkey_dialog_recording(*state, kHotkeyRecordingNone);
-        }
-        return 0;
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case IDC_HOTKEY_RECORD:
@@ -3165,6 +3145,9 @@ void show_global_hotkeys_dialog(HWND owner) {
 
     MSG message{};
     while (IsWindow(dialog) && GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if (handle_hotkey_dialog_recording_message(state, message)) {
+            continue;
+        }
         if (!IsDialogMessageW(dialog, &message)) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
