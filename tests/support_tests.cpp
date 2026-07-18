@@ -493,7 +493,9 @@ void test_presence_tracker_lifecycle() {
     CHECK(tracker.snapshot(0).remote_session_id == 900);
     CHECK(close_to(tracker.snapshot(0).rtt_ms, 42.0));
     CHECK(tracker.tick(26'041).empty());
-    CHECK(tracker.tick(36'043).size() == 1);
+    const auto periodic_actions = tracker.tick(36'043);
+    CHECK(periodic_actions.size() == 1);
+    const PresenceAction periodic_ping = periodic_actions[0];
 
     UdpPresencePacket ping{};
     ping.type = UdpPresenceType::ping;
@@ -505,6 +507,10 @@ void test_presence_tracker_lifecycle() {
     CHECK(response->nonce == ping.nonce);
     CHECK(tracker.snapshot(0).remote_session_id == 901);
     CHECK(tracker.snapshot(0).rtt_ms < 0.0);
+    pong.session_id = 901;
+    pong.nonce = periodic_ping.nonce;
+    tracker.on_packet(0, pong, 36'050);
+    CHECK(close_to(tracker.snapshot(0).rtt_ms, 7.0));
     CHECK(tracker.tick(61'043).empty());
 
     UdpPresencePacket goodbye{};
@@ -539,6 +545,68 @@ void test_presence_tracker_lifecycle() {
     CHECK(shutdown.size() == 1);
     CHECK(shutdown[0].type == UdpPresenceType::goodbye);
     CHECK(shutdown[0].nonce == 0);
+}
+
+void test_presence_tracker_bidirectional_rtt() {
+    using namespace lanspeak::core;
+
+    PresenceTracker first(1, 100, 300);
+    PresenceTracker second(1, 200, 400);
+    first.start(1'000);
+    second.start(1'000);
+    const PresenceAction first_ping = first.tick(1'000)[0];
+    const PresenceAction second_ping = second.tick(1'000)[0];
+
+    UdpPresencePacket packet{};
+    packet.type = UdpPresenceType::ping;
+    packet.session_id = 100;
+    packet.nonce = first_ping.nonce;
+    const PresenceAction second_pong = *second.on_packet(0, packet, 1'002);
+    packet.session_id = 200;
+    packet.nonce = second_ping.nonce;
+    const PresenceAction first_pong = *first.on_packet(0, packet, 1'003);
+
+    packet.type = UdpPresenceType::pong;
+    packet.session_id = 200;
+    packet.nonce = second_pong.nonce;
+    first.on_packet(0, packet, 1'006);
+    packet.session_id = 100;
+    packet.nonce = first_pong.nonce;
+    second.on_packet(0, packet, 1'007);
+    CHECK(close_to(first.snapshot(0).rtt_ms, 6.0));
+    CHECK(close_to(second.snapshot(0).rtt_ms, 7.0));
+
+    PresenceTracker early(1, 500, 600);
+    PresenceTracker late(1, 700, 800);
+    early.start(0);
+    CHECK(early.tick(0).size() == 1);
+    CHECK(early.tick(1'000).size() == 1);
+    CHECK(early.tick(3'000).size() == 1);
+    CHECK(early.tick(5'000).empty());
+    late.start(6'000);
+    const PresenceAction late_ping = late.tick(6'000)[0];
+    packet.type = UdpPresenceType::ping;
+    packet.session_id = 700;
+    packet.nonce = late_ping.nonce;
+    const PresenceAction early_pong = *early.on_packet(0, packet, 6'001);
+    packet.type = UdpPresenceType::pong;
+    packet.session_id = 500;
+    packet.nonce = early_pong.nonce;
+    late.on_packet(0, packet, 6'003);
+    CHECK(late.snapshot(0).rtt_ms >= 0.0);
+
+    const auto immediate = early.tick(6'001);
+    CHECK(immediate.size() == 1);
+    CHECK(immediate[0].type == UdpPresenceType::ping);
+    packet.type = UdpPresenceType::ping;
+    packet.session_id = 500;
+    packet.nonce = immediate[0].nonce;
+    const PresenceAction late_pong = *late.on_packet(0, packet, 6'002);
+    packet.type = UdpPresenceType::pong;
+    packet.session_id = 700;
+    packet.nonce = late_pong.nonce;
+    early.on_packet(0, packet, 6'004);
+    CHECK(early.snapshot(0).rtt_ms >= 0.0);
 }
 
 void test_pcm_conversion_and_resampling() {
@@ -1175,6 +1243,7 @@ int main() {
         test_latency_model();
         test_peer_info_tracker();
         test_presence_tracker_lifecycle();
+        test_presence_tracker_bidirectional_rtt();
         test_pcm_conversion_and_resampling();
         test_wasapi_pcm_payload_and_render_conversion();
         test_jitter_in_order_and_reordering();

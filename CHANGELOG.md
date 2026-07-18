@@ -30,6 +30,7 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 
 ### Fixed
 
+- Fixed asymmetric latency details where an incoming presence probe cancelled the local RTT measurement, leaving one participant with only an online status.
 - The global hotkey dialog now reliably records mouse buttons and hotkeys that are already assigned.
 - Editing or cancelling a contact no longer clears its latched `Talk continuously` state. Latched group and per-contact transmission is restored after a Core restart caused by settings changes.
 - The lock indicator on a contact PTT button no longer squeezes the `PTT` label against the button border.

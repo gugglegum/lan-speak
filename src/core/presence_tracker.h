@@ -58,7 +58,10 @@ private:
     std::uint64_t next_random();
     std::uint64_t random_interval(std::uint64_t minimum_ms, std::uint64_t maximum_ms);
     std::uint64_t next_nonce();
-    void mark_online(PeerState& peer, std::uint64_t now_ms);
+    void mark_online(
+        PeerState& peer,
+        std::uint64_t now_ms,
+        bool preserve_pending_probe = false);
     void schedule_offline_probe(PeerState& peer, std::uint64_t now_ms);
     void emit_ping(std::size_t peer_index, PeerState& peer, std::uint64_t now_ms);
 

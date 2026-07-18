@@ -76,7 +76,10 @@ std::optional<PresenceAction> PresenceTracker::on_packet(
             peer.visible.rtt_ms = -1.0;
         }
         peer.visible.remote_session_id = packet.session_id;
-        mark_online(peer, now_ms);
+        mark_online(peer, now_ms, true);
+        if (!peer.awaiting_pong && peer.visible.rtt_ms < 0.0) {
+            peer.next_probe_at_ms = now_ms;
+        }
         return PresenceAction{peer_index, UdpPresenceType::pong, packet.nonce};
     }
 
@@ -104,7 +107,7 @@ std::optional<PresenceAction> PresenceTracker::on_packet(
 
 void PresenceTracker::on_audio_packet(std::size_t peer_index, std::uint64_t now_ms) {
     if (peer_index < peers_.size()) {
-        mark_online(peers_[peer_index], now_ms);
+        mark_online(peers_[peer_index], now_ms, true);
     }
 }
 
@@ -142,9 +145,15 @@ std::uint64_t PresenceTracker::next_nonce() {
     return nonce == 0 ? 1 : nonce;
 }
 
-void PresenceTracker::mark_online(PeerState& peer, std::uint64_t now_ms) {
+void PresenceTracker::mark_online(
+    PeerState& peer,
+    std::uint64_t now_ms,
+    bool preserve_pending_probe) {
     peer.visible.state = PeerPresenceState::online;
     peer.visible.last_seen_ms = now_ms;
+    if (preserve_pending_probe && peer.awaiting_pong) {
+        return;
+    }
     peer.awaiting_pong = false;
     peer.attempts = 0;
     peer.pending_nonce = 0;
