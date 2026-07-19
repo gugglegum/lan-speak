@@ -78,7 +78,7 @@ Contact parse_contact(const std::vector<std::wstring>& fields, bool legacy) {
     contact.gain = parse_double(fields[offset + 2], 1.0, 0.0, 3.0);
     contact.self_duck = parse_bool(fields[offset + 3], true);
     contact.duck_db = parse_double(fields[offset + 4], 12.0, 0.0, 60.0);
-    contact.duck_threshold = parse_double(fields[offset + 5], 0.02, 0.0, 1.0);
+    contact.duck_threshold = parse_double(fields[offset + 5], 0.2, 0.0, 1.0);
     contact.duck_attack_ms = static_cast<int>(parse_long(fields[offset + 6], 8, 0, 1000));
     contact.duck_hold_ms = static_cast<int>(parse_long(fields[offset + 7], 80, 0, 1000));
     contact.duck_release_ms = static_cast<int>(parse_long(fields[offset + 8], 120, 0, 5000));

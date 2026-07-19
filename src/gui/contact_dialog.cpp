@@ -376,7 +376,7 @@ Contact contact_from_dialog(const ContactDialogState& state) {
     contact.self_duck = SendMessageW(state.self_duck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     contact.duck_db = parse_double(window_text_or(state.duck_db, L"12"), 12.0, 0.0, 60.0);
     contact.duck_threshold = parse_double(
-        window_text_or(state.duck_threshold, L"0.02"), 0.02, 0.0, 1.0);
+        window_text_or(state.duck_threshold, L"0.2"), 0.2, 0.0, 1.0);
     contact.duck_attack_ms = parse_int(window_text_or(state.duck_attack, L"8"), 8, 0, 1000);
     contact.duck_hold_ms = parse_int(window_text_or(state.duck_hold, L"80"), 80, 0, 1000);
     contact.duck_release_ms = parse_int(

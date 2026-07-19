@@ -987,6 +987,7 @@ void test_contact_meter_bank() {
 
 void test_settings_round_trip_and_legacy_contact() {
     using namespace lanspeak::gui;
+    CHECK(close_to(Contact{}.duck_threshold, 0.2));
     AppSettings source;
     source.window_width = 777;
     source.window_height = 555;
@@ -1088,6 +1089,8 @@ void test_room_peer_receive_buffer_options() {
     CHECK(!empty_room.show_help);
     CHECK(empty_room.mode == ProbeOptions::Mode::room);
     CHECK(empty_room.room_peers.empty());
+    CHECK(close_to(empty_room.self_duck_threshold, 0.2));
+    CHECK(close_to(RoomPeerOptions{}.self_duck_threshold, 0.2));
 }
 
 void test_network_adapter_resolution() {

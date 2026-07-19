@@ -840,7 +840,7 @@ void print_usage() {
     std::wcout << L"--capture-role and --render-role accept console, multimedia, communications; default console.\n";
     std::wcout << L"--capture-device and --render-device accept an active endpoint index, name fragment, or endpoint id.\n";
     std::wcout << L"--self-duck-db accepts 0..60 dB, default 0/off; attack 8 ms, hold 80 ms, release 120 ms.\n";
-    std::wcout << L"--self-duck-threshold accepts 0..1, default 0.02.\n";
+    std::wcout << L"--self-duck-threshold accepts 0..1, default 0.2.\n";
     std::wcout << L"Use --exclusive only for lab diagnostics when no game or voice app needs the same devices.\n";
 }
 

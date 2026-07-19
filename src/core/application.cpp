@@ -245,7 +245,7 @@ struct SelfDuckingSettings {
     int hold_ms = 80;
     int attack_ms = 8;
     int release_ms = 120;
-    double threshold = 0.02;
+    double threshold = 0.2;
 
     bool enabled() const {
         return duck_db > 0.0 && threshold > 0.0;

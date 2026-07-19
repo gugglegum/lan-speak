@@ -14,7 +14,7 @@ namespace lanspeak::core {
 struct RoomPeerControl {
     std::atomic<double> gain{1.0};
     std::atomic<double> duck_db{0.0};
-    std::atomic<double> duck_threshold{0.02};
+    std::atomic<double> duck_threshold{0.2};
     std::atomic<int> duck_attack_ms{8};
     std::atomic<int> duck_hold_ms{80};
     std::atomic<int> duck_release_ms{120};
@@ -25,7 +25,7 @@ struct RoomPeerControl {
 struct RoomPeerControlSnapshot {
     double gain = 1.0;
     double duck_db = 0.0;
-    double duck_threshold = 0.02;
+    double duck_threshold = 0.2;
     int duck_attack_ms = 8;
     int duck_hold_ms = 80;
     int duck_release_ms = 120;

@@ -26,7 +26,7 @@ struct RoomPeerOptions {
     std::uint16_t port = kDefaultUdpPort;
     double gain = 1.0;
     double self_duck_db = 0.0;
-    double self_duck_threshold = 0.02;
+    double self_duck_threshold = 0.2;
     int self_duck_attack_ms = 8;
     int self_duck_hold_ms = 80;
     int self_duck_release_ms = 120;
@@ -76,7 +76,7 @@ struct ProbeOptions {
     int self_duck_hold_ms = 80;
     int self_duck_attack_ms = 8;
     int self_duck_release_ms = 120;
-    double self_duck_threshold = 0.02;
+    double self_duck_threshold = 0.2;
 };
 
 ProbeOptions parse_options(int argc, wchar_t* argv[]);

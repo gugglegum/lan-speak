@@ -38,7 +38,7 @@ struct Contact {
     bool global_ptt_enabled = true;
     bool self_duck = true;
     double duck_db = 12.0;
-    double duck_threshold = 0.02;
+    double duck_threshold = 0.2;
     int duck_attack_ms = 8;
     int duck_hold_ms = 80;
     int duck_release_ms = 120;

@@ -19,48 +19,44 @@ function New-IconBitmap {
     function S([double]$Value) { return [single]($Value * $scale) }
 
     $bubbleBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-        (New-Object System.Drawing.RectangleF((S 12), (S 25), (S 210), (S 174))),
+        (New-Object System.Drawing.RectangleF((S 8), (S 20), (S 240), (S 218))),
         [System.Drawing.Color]::FromArgb(255, 55, 222, 214),
         [System.Drawing.Color]::FromArgb(255, 25, 154, 235),
         [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal)
 
     $bubblePath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $bubbleRect = New-Object System.Drawing.RectangleF((S 10), (S 26), (S 211), (S 145))
-    $bubbleRadius = S 46
+    $bubbleRect = New-Object System.Drawing.RectangleF((S 8), (S 20), (S 240), (S 172))
+    $bubbleRadius = S 50
     $bubbleDiameter = $bubbleRadius * 2
     $bubblePath.AddArc($bubbleRect.X, $bubbleRect.Y, $bubbleDiameter, $bubbleDiameter, 180, 90)
     $bubblePath.AddArc($bubbleRect.Right - $bubbleDiameter, $bubbleRect.Y, $bubbleDiameter, $bubbleDiameter, 270, 90)
     $bubblePath.AddArc($bubbleRect.Right - $bubbleDiameter, $bubbleRect.Bottom - $bubbleDiameter, $bubbleDiameter, $bubbleDiameter, 0, 90)
-    $bubblePath.AddLine((S 108), (S 170), (S 69), (S 223))
-    $bubblePath.AddLine((S 89), (S 169), (S 72), (S 169))
+    $bubblePath.AddLine((S 198), (S 192), (S 112), (S 192))
+    $bubblePath.AddLine((S 112), (S 192), (S 66), (S 238))
+    $bubblePath.AddLine((S 66), (S 238), (S 80), (S 192))
+    $bubblePath.AddLine((S 80), (S 192), (S 58), (S 192))
     $bubblePath.AddArc($bubbleRect.X, $bubbleRect.Bottom - $bubbleDiameter, $bubbleDiameter, $bubbleDiameter, 90, 90)
     $bubblePath.CloseFigure()
     $graphics.FillPath($bubbleBrush, $bubblePath)
 
-    $wavePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(248, 255, 255, 255), (S 19))
-    $wavePen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $wavePen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $wavePen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+    $waveAmplitudes = @(0, 2, 3, 5, 9, 15, 8, 22, 12, 33, 18, 42, 28, 55, 35, 20, 44, 25, 12, 36, 58, 30, 18, 47, 24, 14, 37, 21, 50, 34, 18, 40, 25, 14, 22, 10, 6, 3, 1, 0)
+    $wavePath = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $topPoints = @()
+    $bottomPoints = @()
+    for ($index = 0; $index -lt $waveAmplitudes.Count; $index++) {
+        $x = 30 + ($index * 5)
+        $amplitude = $waveAmplitudes[$index]
+        $topPoints += New-Object System.Drawing.PointF((S $x), (S (106 - $amplitude)))
+        $bottomPoints += New-Object System.Drawing.PointF((S $x), (S (106 + $amplitude)))
+    }
+    [Array]::Reverse($bottomPoints)
+    $wavePath.AddLines([System.Drawing.PointF[]]($topPoints + $bottomPoints))
+    $wavePath.CloseFigure()
+    $waveBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(248, 255, 255, 255))
+    $graphics.FillPath($waveBrush, $wavePath)
 
-    $points = @(
-        (New-Object System.Drawing.PointF((S 42), (S 103))),
-        (New-Object System.Drawing.PointF((S 72), (S 103))),
-        (New-Object System.Drawing.PointF((S 95), (S 68))),
-        (New-Object System.Drawing.PointF((S 126), (S 149))),
-        (New-Object System.Drawing.PointF((S 154), (S 80))),
-        (New-Object System.Drawing.PointF((S 181), (S 103))),
-        (New-Object System.Drawing.PointF((S 205), (S 103)))
-    )
-    $graphics.DrawLines($wavePen, $points)
-
-    $nodeBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 142, 255, 95))
-    $nodePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(135, 4, 85, 74), (S 5))
-    $graphics.FillEllipse($nodeBrush, (S 170), (S 169), (S 72), (S 72))
-    $graphics.DrawEllipse($nodePen, (S 170), (S 169), (S 72), (S 72))
-
-    $nodePen.Dispose()
-    $nodeBrush.Dispose()
-    $wavePen.Dispose()
+    $waveBrush.Dispose()
+    $wavePath.Dispose()
     $bubblePath.Dispose()
     $bubbleBrush.Dispose()
     $graphics.Dispose()

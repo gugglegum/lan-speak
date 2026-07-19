@@ -9,7 +9,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Changes intended for version 1.1.0 will be recorded here as development progresses.
+Changes after version 1.1.0 will be recorded here as development progresses.
+
+## [1.1.0] - 2026-07-19
 
 ### Added
 
@@ -24,6 +26,8 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 
 ### Changed
 
+- Refined the application and OSD icons by removing the notification-like status dot, clarifying the speech-bubble tail, and replacing the lightning-like mark with a dense recorded-audio waveform.
+- Raised the default self-ducking threshold for new contacts from `0.02` to `0.2` (-14 dBFS) to avoid attenuating a nearby contact's own voice when it leaks into the local microphone.
 - Replaced the group talk mode selector with a `Talk continuously` checkbox. The group talk button now always transmits only while held, while the checkbox latches and releases the same transmission state.
 - Default input and output device selection now uses the Windows `console` role, matching the devices selected on the main Sound settings page.
 - Development and pre-release builds now derive their displayed and Windows executable versions from an exact SemVer Git tag or a CMake override without modifying tracked source files.
@@ -58,5 +62,6 @@ Changes intended for version 1.1.0 will be recorded here as development progress
 - Text-based control and telemetry IPC between `LanSpeak.exe` and `LanSpeakCore.exe`.
 - Static MSVC runtime linking, so release binaries do not require the Visual C++ Redistributable.
 
-[Unreleased]: https://github.com/gugglegum/lan-speak/compare/1.0.0...HEAD
+[Unreleased]: https://github.com/gugglegum/lan-speak/compare/1.1.0...HEAD
+[1.1.0]: https://github.com/gugglegum/lan-speak/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/gugglegum/lan-speak/releases/tag/1.0.0
